@@ -1,4 +1,5 @@
 chrome.storage.sync.get(['enabled'], function(result) {
+  console.log('Loaded extension state:', result.enabled); // デバッグ用ログ
   if (result.enabled) {
     console.log('Content script loaded'); // デバッグ用ログ
 
@@ -31,8 +32,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
           text = text.replace(regex, replacement);
         }
         node.nodeValue = text;
-      } else if (node.nodeType === 1) { // 要素ノード
-        for (let child of node.childNodes) {
+      } else if (node.nodeType === 1 && !['SCRIPT', 'STYLE'].includes(node.tagName)) { // 要素ノードでスクリプトとスタイルを除外
+        let childNodes = Array.from(node.childNodes);
+        for (let child of childNodes) {
           replaceText(child, regexTable);
         }
       }
