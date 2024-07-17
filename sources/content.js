@@ -27,7 +27,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
 
           const regexTable = [];
           for (let [pattern, replacement] of Object.entries(sortedTranslationTable)) {
-            regexTable.push([new RegExp(pattern, 'g'), replacement]);
+            regexTable.push([new RegExp(pattern, 'gi'), replacement]);
           }
           console.log('[D4T] Loaded and sorted translation table:', regexTable); // デバッグ用ログ
           return regexTable;

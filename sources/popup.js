@@ -1,11 +1,16 @@
 document.addEventListener('DOMContentLoaded', () => {
   const toggleSwitch = document.getElementById('toggleSwitch');
   const convertButton = document.getElementById('convertButton');
+  const versionElement = document.getElementById('version');
 
   // ストレージから現在の状態を取得してスイッチの状態を設定
   chrome.storage.sync.get(['enabled'], function(result) {
     toggleSwitch.checked = !!result.enabled;
   });
+
+  // バージョン情報を表示
+  const manifestData = chrome.runtime.getManifest();
+  versionElement.textContent = 'ver ' + manifestData.version;
 
   // スイッチがクリックされたときの動作
   toggleSwitch.addEventListener('change', () => {
