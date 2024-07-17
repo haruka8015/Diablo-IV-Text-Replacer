@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Text Replacer",
-  "version": "1.0",
-  "description": "Replace text in a webpage using a predefined translation table.",
+  "name": "Diablo IV Text Replacer",
+  "version": "1.1",
+  "description": "ディアブロIVの英語表記ビルドサイト(mobalytics,d4builds,maxroll)の英語表記の一部を日本語名に変換します",
   "permissions": [
     "activeTab",
     "storage"
@@ -12,7 +12,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": [
+        "*://*.mobalytics.gg/*",
+        "*://*.d4builds.gg/*",
+        "*://*.maxroll.gg/*"
+      ],
       "js": ["content.js"]
     }
   ],
@@ -21,5 +25,13 @@
       "resources": ["translations.json"],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  }
 }
