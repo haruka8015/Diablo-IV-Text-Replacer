@@ -1,12 +1,15 @@
+// デバッグログの出力を切り替える変数
+const D4DEBUG_DISPLAY = false;
+
 chrome.storage.sync.get(['enabled'], function(result) {
-  console.log('[D4T] Loaded extension state:', result.enabled); // デバッグ用ログ
+  if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded extension state:', result.enabled); // デバッグ用ログ
   if (result.enabled) {
-    console.log('[D4T] Content script loaded'); // デバッグ用ログ
+    if (D4DEBUG_DISPLAY) console.log('[D4T] Content script loaded'); // デバッグ用ログ
 
     let translationTable = {};
 
     function loadTranslations() {
-      console.log('[D4T] Loading translations...'); // デバッグ用ログ
+      if (D4DEBUG_DISPLAY) console.log('[D4T] Loading translations...'); // デバッグ用ログ
       const url = chrome.runtime.getURL('translations.json');
       return fetch(url)
         .then(response => {
@@ -29,7 +32,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
           for (let [pattern, replacement] of Object.entries(sortedTranslationTable)) {
             regexTable.push([new RegExp(pattern, 'gi'), replacement]);
           }
-          console.log('[D4T] Loaded and sorted translation table:', regexTable); // デバッグ用ログ
+          if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded and sorted translation table:', regexTable); // デバッグ用ログ
           return regexTable;
         });
     }
@@ -37,12 +40,17 @@ chrome.storage.sync.get(['enabled'], function(result) {
     function replaceText(node, regexTable) {
       if (node.nodeType === 3) { // テキストノード
         let text = node.nodeValue;
-        console.log('[D4T] Original text:', text); // デバッグ用ログ
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Original text:', text); // デバッグ用ログ
         for (let [regex, replacement] of regexTable) {
-          text = text.replace(regex, replacement);
+          if (D4DEBUG_DISPLAY) console.log('[D4T] Applying regex:', regex); // デバッグ用ログ
+          const newText = text.replace(regex, replacement);
+          if (newText !== text && D4DEBUG_DISPLAY) {
+            console.log('[D4T] Text changed from:', text, 'to:', newText); // デバッグ用ログ
+          }
+          text = newText;
         }
         node.nodeValue = text;
-        console.log('[D4T] Replaced text:', text); // デバッグ用ログ
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Replaced text:', text); // デバッグ用ログ
       } else if (node.nodeType === 1 && !['SCRIPT', 'STYLE'].includes(node.tagName)) { // 要素ノードでスクリプトとスタイルを除外
         let childNodes = Array.from(node.childNodes);
         for (let child of childNodes) {
@@ -55,12 +63,17 @@ chrome.storage.sync.get(['enabled'], function(result) {
       const elements = document.querySelectorAll('[title]');
       elements.forEach(el => {
         let title = el.getAttribute('title');
-        console.log('[D4T] Original title:', title); // デバッグ用ログ
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Original title:', title); // デバッグ用ログ
         for (let [regex, replacement] of regexTable) {
-          title = title.replace(regex, replacement);
+          if (D4DEBUG_DISPLAY) console.log('[D4T] Applying regex on title:', regex); // デバッグ用ログ
+          const newTitle = title.replace(regex, replacement);
+          if (newTitle !== title && D4DEBUG_DISPLAY) {
+            console.log('[D4T] Title changed from:', title, 'to:', newTitle); // デバッグ用ログ
+          }
+          title = newTitle;
         }
         el.setAttribute('title', title);
-        console.log('[D4T] Replaced title:', title); // デバッグ用ログ
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Replaced title:', title); // デバッグ用ログ
       });
     }
 
@@ -72,7 +85,11 @@ chrome.storage.sync.get(['enabled'], function(result) {
             if (node.nodeType === 1 && node.hasAttribute('title')) {
               let title = node.getAttribute('title');
               for (let [regex, replacement] of regexTable) {
-                title = title.replace(regex, replacement);
+                const newTitle = title.replace(regex, replacement);
+                if (newTitle !== title && D4DEBUG_DISPLAY) {
+                  console.log('[D4T] Title changed from:', title, 'to:', newTitle); // デバッグ用ログ
+                }
+                title = newTitle;
               }
               node.setAttribute('title', title);
             }
@@ -81,12 +98,13 @@ chrome.storage.sync.get(['enabled'], function(result) {
       });
 
       observer.observe(document.body, { childList: true, subtree: true });
-      console.log('[D4T] MutationObserver started'); // デバッグ用ログ
+      if (D4DEBUG_DISPLAY) console.log('[D4T] MutationObserver started'); // デバッグ用ログ
     }
 
     function applyTranslations() {
-      console.log('[D4T] applyTranslations started'); // デバッグ用ログ
+      if (D4DEBUG_DISPLAY) console.log('[D4T] applyTranslations started'); // デバッグ用ログ
       loadTranslations().then(regexTable => {
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded regexTable:', regexTable); // デバッグ用ログ
         replaceText(document.body, regexTable);
         replaceTitleAttributes(regexTable);
         observeDOM(regexTable);
@@ -95,50 +113,54 @@ chrome.storage.sync.get(['enabled'], function(result) {
           if (event.target.hasAttribute('title')) {
             let title = event.target.getAttribute('title');
             for (let [regex, replacement] of regexTable) {
-              title = title.replace(regex, replacement);
+              const newTitle = title.replace(regex, replacement);
+              if (newTitle !== title && D4DEBUG_DISPLAY) {
+                console.log('[D4T] Title changed on mouseover from:', title, 'to:', newTitle); // デバッグ用ログ
+              }
+              title = newTitle;
             }
             event.target.setAttribute('title', title);
           }
         });
-        console.log('[D4T] Translations applied on page load'); // デバッグ用ログ
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Translations applied on page load'); // デバッグ用ログ
       }).catch(error => {
         console.error('[D4T] Error loading translations:', error);
       });
     }
 
     function initialize() {
-      console.log('[D4T] Initializing...'); // デバッグ用ログ
+      if (D4DEBUG_DISPLAY) console.log('[D4T] Initializing...'); // デバッグ用ログ
       setTimeout(() => {
-        console.log('[D4T] Timeout completed'); // デバッグ用ログ
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Timeout completed'); // デバッグ用ログ
         applyTranslations();
       }, 500); // 500ミリ秒の遅延を追加
     }
 
     // DOMContentLoaded イベントを追加
     document.addEventListener('DOMContentLoaded', () => {
-      console.log('[D4T] DOMContentLoaded event triggered'); // デバッグ用ログ
+      if (D4DEBUG_DISPLAY) console.log('[D4T] DOMContentLoaded event triggered'); // デバッグ用ログ
       initialize();
     });
 
     // load イベントを追加
     window.addEventListener('load', () => {
-      console.log('[D4T] Window load event triggered'); // デバッグ用ログ
+      if (D4DEBUG_DISPLAY) console.log('[D4T] Window load event triggered'); // デバッグ用ログ
       initialize();
     });
 
     // ページが既にロードされている場合にも対応
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
-      console.log('[D4T] Document already loaded'); // デバッグ用ログ
+      if (D4DEBUG_DISPLAY) console.log('[D4T] Document already loaded'); // デバッグ用ログ
       initialize();
     }
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.action === 'convert') {
-        console.log('[D4T] Manual convert triggered'); // デバッグ用ログ
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Manual convert triggered'); // デバッグ用ログ
         applyTranslations();
       }
     });
   } else {
-    console.log('[D4T] Extension is disabled');
+    if (D4DEBUG_DISPLAY) console.log('[D4T] Extension is disabled');
   }
 });
