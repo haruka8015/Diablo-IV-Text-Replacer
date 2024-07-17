@@ -1,21 +1,12 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <title>Text Replacer</title>
+  <title>Diablo IV Text Replacer</title>
   <style>
     body {
       width: 200px;
-      font-family: "Arial Unicode MS", Arial, sans-serif;
-    }
-    .container {
-      display: flex;
-      align-items: center;
-      margin: 10px 0;
-    }
-    .label {
-      flex: 1;
-      font-size: 16px;
+      font-family: Arial, sans-serif;
     }
     .switch {
       position: relative;
@@ -42,31 +33,34 @@
     .slider:before {
       position: absolute;
       content: "";
-      height: 14px;
-      width: 14px;
-      left: 3px;
-      bottom: 3px;
+      height: 12px;
+      width: 12px;
+      left: 4px;
+      bottom: 4px;
       background-color: white;
       transition: .4s;
       border-radius: 50%;
     }
     input:checked + .slider {
-      background-color: #4CAF50;
+      background-color: #2196F3;
     }
     input:checked + .slider:before {
       transform: translateX(14px);
     }
+    #convertButton {
+      display: block;
+      margin: 10px 0;
+    }
   </style>
 </head>
 <body>
-  <h3>Text Replacer</h3>
-  <div class="container">
-    <span class="label">変換機能</span>
-    <label class="switch">
-      <input type="checkbox" id="toggleSwitch">
-      <span class="slider"></span>
-    </label>
-  </div>
+  <h1>Diablo IV Text Replacer</h1>
+  <label class="switch">
+    <input type="checkbox" id="toggleSwitch">
+    <span class="slider"></span>
+  </label>
+  <span>変換機能</span>
+  <button id="convertButton">手動で変換</button>
   <script src="popup.js"></script>
 </body>
 </html>

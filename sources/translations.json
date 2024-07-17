@@ -6,6 +6,20 @@
   "Lucky Hit: Up to a 40% Chance to Deal Poison Damage": "幸運の一撃: 最大40%の確率で毒ダメージを与える",
   "Lucky Hit: Up to a 40% Chance to Deal Shadow Damage": "幸運の一撃: 最大40%の確率でシャドウダメージを与える",
 
+
+  "Skeletal Warriors": "スケルトンウォーリア",
+  "Skeletal Mages": "スケルトンメイジ",
+  "Skeletal Golems": "ゴーレム",
+  "Skirmishers": "スカウト",
+  "Defenders": "ディフェンダー",
+  "Reapers": "リーパー",
+  "Shadow": "シャドウ",
+  "Cold": "冷気",
+  "Bone": "骨",
+  "Blood": "血",
+  "Iron": "鉄を打つ者",
+  
+
   "2h Mace": "両手用メイス",
   "2h Axe": "両手用斧",
   "1h Axe": "片手用斧",
@@ -940,7 +954,7 @@
   "Desecration": "冒涜",
   "Essence": "精髄",
   "Exhumation": "死体発掘",
-  "Golem": "ゴーレム",
+  "Golems?": "ゴーレム",
   "Gravekeeper": "墓守",
   "Mage": "魔術師",
   "Sacrificial": "生贄の",
