@@ -30,7 +30,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
 
           const regexTable = [];
           for (let [pattern, replacement] of Object.entries(sortedTranslationTable)) {
-            regexTable.push([new RegExp(pattern, 'gi'), replacement]);
+            // クォート文字に対応する正規表現を作成
+            const escapedPattern = pattern.replace(/['’]/g, "['’]");
+            regexTable.push([new RegExp(escapedPattern, 'gi'), replacement]);
           }
           if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded and sorted translation table:', regexTable); // デバッグ用ログ
           return regexTable;
