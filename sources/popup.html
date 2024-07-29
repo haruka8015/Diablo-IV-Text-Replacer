@@ -7,7 +7,26 @@
     body {
       width: 200px;
       font-family: Arial, sans-serif;
+      background-color: white; /* 常に白い背景 */
+      color: black; /* 常に黒い文字 */
     }
+
+    @media (prefers-color-scheme: dark) {
+      body {
+        background-color: #333; /* ダークモードの背景色 */
+        color: white; /* ダークモードの文字色 */
+      }
+      .slider {
+        background-color: #666;
+      }
+      .slider:before {
+        background-color: white;
+      }
+      #version {
+        color: #aaa;
+      }
+    }
+
     .switch {
       position: relative;
       display: inline-block;
@@ -50,6 +69,14 @@
     #convertButton {
       display: block;
       margin: 10px 0;
+      background-color: #2196F3;
+      color: white;
+      border: none;
+      padding: 10px;
+      cursor: pointer;
+    }
+    #convertButton:hover {
+      background-color: #1976D2;
     }
     #version {
       position: absolute;
@@ -61,14 +88,14 @@
   </style>
 </head>
 <body>
-  <h1>Diablo IV Text Replacer</h1>
-  <label class="switch">
-    <input type="checkbox" id="toggleSwitch">
-    <span class="slider"></span>
-  </label>
-  <span>変換機能</span>
-  <button id="convertButton">手動で変換</button>
-  <div id="version"></div>
-  <script src="popup.js"></script>
+<h1>Diablo IV Text Replacer</h1>
+<label class="switch">
+  <input type="checkbox" id="toggleSwitch">
+  <span class="slider"></span>
+</label>
+<span>変換機能</span>
+<button id="convertButton">手動で変換</button>
+<div id="version"></div>
+<script src="popup.js"></script>
 </body>
 </html>
