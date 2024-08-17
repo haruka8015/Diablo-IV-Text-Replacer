@@ -1,5 +1,11 @@
 // デバッグログの出力を切り替える変数
 const D4DEBUG_DISPLAY = false;
+// 初期化時変換をするまでのデバウンス待機時間(ms)
+const DEBOUNCE_DELAY_MS = 1000;
+// DOM変化時のデバウンス遅延時間を定義
+const DEBOUNCE_DOM_DELAY_MS = 100;
+// DOM変更に対するミューテーションの閾値を定義
+const DOM_CHANGE_MUTATION_THRESHOLD = 5;
 
 chrome.storage.sync.get(['enabled'], function(result) {
   if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded extension state:', result.enabled); // デバッグ用ログ
@@ -79,24 +85,46 @@ chrome.storage.sync.get(['enabled'], function(result) {
       });
     }
 
+
+    let observeDOMTimer;
+
     function observeDOM(regexTable) {
       const observer = new MutationObserver(mutations => {
-        mutations.forEach(mutation => {
-          mutation.addedNodes.forEach(node => {
-            replaceText(node, regexTable);
-            if (node.nodeType === 1 && node.hasAttribute('title')) {
-              let title = node.getAttribute('title');
-              for (let [regex, replacement] of regexTable) {
-                const newTitle = title.replace(regex, replacement);
-                if (newTitle !== title && D4DEBUG_DISPLAY) {
-                  console.log('[D4T] Title changed from:', title, 'to:', newTitle); // デバッグ用ログ
-                }
-                title = newTitle;
-              }
-              node.setAttribute('title', title);
+        if (D4DEBUG_DISPLAY) {
+          console.log(`[D4T] Number of mutations observed: ${mutations.length}`);
+        }
+
+        if (mutations.length > DOM_CHANGE_MUTATION_THRESHOLD) {
+          // すでにタイマーが設定されている場合はクリア
+          if (observeDOMTimer) clearTimeout(observeDOMTimer);
+
+          // mutationsが閾値を超えた場合はデバウンスで遅延させて全体をまとめて処理
+          observeDOMTimer = setTimeout(() => {
+            if (D4DEBUG_DISPLAY) {
+              console.log('[D4T] Performing full-page translation due to high mutation count.');
             }
+            replaceText(document.body, regexTable);
+            replaceTitleAttributes(regexTable);
+          }, DEBOUNCE_DOM_DELAY_MS);
+        } else {
+          // mutationsが閾値以下の場合は、逐次処理
+          mutations.forEach(mutation => {
+            mutation.addedNodes.forEach(node => {
+              replaceText(node, regexTable);
+              if (node.nodeType === 1 && node.hasAttribute('title')) {
+                let title = node.getAttribute('title');
+                for (let [regex, replacement] of regexTable) {
+                  const newTitle = title.replace(regex, replacement);
+                  if (newTitle !== title && D4DEBUG_DISPLAY) {
+                    console.log('[D4T] Title changed from:', title, 'to:', newTitle);
+                  }
+                  title = newTitle;
+                }
+                node.setAttribute('title', title);
+              }
+            });
           });
-        });
+        }
       });
 
       observer.observe(document.body, { childList: true, subtree: true });
@@ -130,13 +158,20 @@ chrome.storage.sync.get(['enabled'], function(result) {
       });
     }
 
+    let debounceTimer;
     function initialize() {
       if (D4DEBUG_DISPLAY) console.log('[D4T] Initializing...'); // デバッグ用ログ
-      setTimeout(() => {
+
+      // 既存のタイマーをクリアする
+      if (debounceTimer) clearTimeout(debounceTimer);
+
+      // 新しいタイマーを設定
+      debounceTimer = setTimeout(() => {
         if (D4DEBUG_DISPLAY) console.log('[D4T] Timeout completed'); // デバッグ用ログ
         applyTranslations();
-      }, 500); // 500ミリ秒の遅延を追加
+      }, DEBOUNCE_DELAY_MS); // nミリ秒の遅延を追加
     }
+
 
     // DOMContentLoaded イベントを追加
     document.addEventListener('DOMContentLoaded', () => {
