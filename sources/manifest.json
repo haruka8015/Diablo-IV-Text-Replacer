@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Diablo IV Text Replacer",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "description": "ビルドサイト(mobalytics,d4builds,maxroll)の一部を日本語名に変換します。現状主にmobalytics向けです",
   "permissions": [
     "activeTab",

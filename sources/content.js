@@ -18,47 +18,51 @@ chrome.storage.sync.get(['enabled'], function(result) {
       if (D4DEBUG_DISPLAY) console.log('[D4T] Loading translations...'); // デバッグ用ログ
       const url = chrome.runtime.getURL('translations.json');
       return fetch(url)
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`[D4T] Failed to load translations.json, status: ${response.status}`);
-          }
-          return response.json();
-        })
-        .then(data => {
-          translationTable = data;
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`[D4T] Failed to load translations.json, status: ${response.status}`);
+            }
+            return response.json();
+          })
+          .then(data => {
+            translationTable = data;
 
-          // キーの長さが長い順に並び替える
-          const sortedKeys = Object.keys(translationTable).sort((a, b) => b.length - a.length);
-          const sortedTranslationTable = {};
-          sortedKeys.forEach(key => {
-            sortedTranslationTable[key] = translationTable[key];
+            // キーの長さが長い順に並び替える
+            const sortedKeys = Object.keys(translationTable).sort((a, b) => b.length - a.length);
+            const sortedTranslationTable = {};
+            sortedKeys.forEach(key => {
+              sortedTranslationTable[key] = translationTable[key];
+            });
+
+            const regexTable = [];
+            for (let [pattern, replacement] of Object.entries(sortedTranslationTable)) {
+              // クォート文字に対応する正規表現を作成
+              const escapedPattern = pattern.replace(/['’]/g, "['’]");
+              regexTable.push([new RegExp(escapedPattern, 'gi'), replacement]);
+            }
+            if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded and sorted translation table:', regexTable); // デバッグ用ログ
+            return regexTable;
           });
+    }
 
-          const regexTable = [];
-          for (let [pattern, replacement] of Object.entries(sortedTranslationTable)) {
-            // クォート文字に対応する正規表現を作成
-            const escapedPattern = pattern.replace(/['’]/g, "['’]");
-            regexTable.push([new RegExp(escapedPattern, 'gi'), replacement]);
-          }
-          if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded and sorted translation table:', regexTable); // デバッグ用ログ
-          return regexTable;
-        });
+    // 共通の変換処理関数
+    function applyRegexTransformations(text, regexTable) {
+      if (D4DEBUG_DISPLAY) console.log('[D4T] Original text:', text); // デバッグ用ログ
+      for (let [regex, replacement] of regexTable) {
+        if (D4DEBUG_DISPLAY) console.log('[D4T] Applying regex:', regex); // デバッグ用ログ
+        const wordBoundaryRegex = new RegExp(`\\b${regex.source}\\b`, regex.flags);
+        text = text.replace(wordBoundaryRegex, replacement);
+      }
+      return text;
     }
 
     function replaceText(node, regexTable) {
       if (node.nodeType === 3) { // テキストノード
-        let text = node.nodeValue;
-        if (D4DEBUG_DISPLAY) console.log('[D4T] Original text:', text); // デバッグ用ログ
-        for (let [regex, replacement] of regexTable) {
-          if (D4DEBUG_DISPLAY) console.log('[D4T] Applying regex:', regex); // デバッグ用ログ
-          const newText = text.replace(regex, replacement);
-          if (newText !== text && D4DEBUG_DISPLAY) {
-            console.log('[D4T] Text changed from:', text, 'to:', newText); // デバッグ用ログ
-          }
-          text = newText;
+        let newText = applyRegexTransformations(node.nodeValue, regexTable);
+        if (newText !== node.nodeValue && D4DEBUG_DISPLAY) {
+          console.log('[D4T] Text changed from:', node.nodeValue, 'to:', newText); // デバッグ用ログ
         }
-        node.nodeValue = text;
-        if (D4DEBUG_DISPLAY) console.log('[D4T] Replaced text:', text); // デバッグ用ログ
+        node.nodeValue = newText;
       } else if (node.nodeType === 1 && !['SCRIPT', 'STYLE'].includes(node.tagName)) { // 要素ノードでスクリプトとスタイルを除外
         let childNodes = Array.from(node.childNodes);
         for (let child of childNodes) {
@@ -70,21 +74,13 @@ chrome.storage.sync.get(['enabled'], function(result) {
     function replaceTitleAttributes(regexTable) {
       const elements = document.querySelectorAll('[title]');
       elements.forEach(el => {
-        let title = el.getAttribute('title');
-        if (D4DEBUG_DISPLAY) console.log('[D4T] Original title:', title); // デバッグ用ログ
-        for (let [regex, replacement] of regexTable) {
-          if (D4DEBUG_DISPLAY) console.log('[D4T] Applying regex on title:', regex); // デバッグ用ログ
-          const newTitle = title.replace(regex, replacement);
-          if (newTitle !== title && D4DEBUG_DISPLAY) {
-            console.log('[D4T] Title changed from:', title, 'to:', newTitle); // デバッグ用ログ
-          }
-          title = newTitle;
+        let newTitle = applyRegexTransformations(el.getAttribute('title'), regexTable);
+        if (newTitle !== el.getAttribute('title') && D4DEBUG_DISPLAY) {
+          console.log('[D4T] Title changed from:', el.getAttribute('title'), 'to:', newTitle); // デバッグ用ログ
         }
-        el.setAttribute('title', title);
-        if (D4DEBUG_DISPLAY) console.log('[D4T] Replaced title:', title); // デバッグ用ログ
+        el.setAttribute('title', newTitle);
       });
     }
-
 
     let observeDOMTimer;
 
@@ -113,14 +109,11 @@ chrome.storage.sync.get(['enabled'], function(result) {
               replaceText(node, regexTable);
               if (node.nodeType === 1 && node.hasAttribute('title')) {
                 let title = node.getAttribute('title');
-                for (let [regex, replacement] of regexTable) {
-                  const newTitle = title.replace(regex, replacement);
-                  if (newTitle !== title && D4DEBUG_DISPLAY) {
-                    console.log('[D4T] Title changed from:', title, 'to:', newTitle);
-                  }
-                  title = newTitle;
+                let newTitle = applyRegexTransformations(title, regexTable);
+                if (newTitle !== title && D4DEBUG_DISPLAY) {
+                  console.log('[D4T] Title changed from:', title, 'to:', newTitle); // デバッグ用ログ
                 }
-                node.setAttribute('title', title);
+                node.setAttribute('title', newTitle);
               }
             });
           });
@@ -140,18 +133,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
         observeDOM(regexTable);
 
         document.body.addEventListener('mouseover', event => {
-          if (event.target.hasAttribute('title')) {
-            let title = event.target.getAttribute('title');
-            for (let [regex, replacement] of regexTable) {
-              const newTitle = title.replace(regex, replacement);
-              if (newTitle !== title && D4DEBUG_DISPLAY) {
-                console.log('[D4T] Title changed on mouseover from:', title, 'to:', newTitle); // デバッグ用ログ
-              }
-              title = newTitle;
-            }
-            event.target.setAttribute('title', title);
-          }
+          handleMouseover(event, regexTable);
         });
+
         if (D4DEBUG_DISPLAY) console.log('[D4T] Translations applied on page load'); // デバッグ用ログ
       }).catch(error => {
         console.error('[D4T] Error loading translations:', error);
@@ -159,6 +143,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
     }
 
     let debounceTimer;
+
     function initialize() {
       if (D4DEBUG_DISPLAY) console.log('[D4T] Initializing...'); // デバッグ用ログ
 
@@ -169,9 +154,8 @@ chrome.storage.sync.get(['enabled'], function(result) {
       debounceTimer = setTimeout(() => {
         if (D4DEBUG_DISPLAY) console.log('[D4T] Timeout completed'); // デバッグ用ログ
         applyTranslations();
-      }, DEBOUNCE_DELAY_MS); // nミリ秒の遅延を追加
+      }, DEBOUNCE_DELAY_MS);
     }
-
 
     // DOMContentLoaded イベントを追加
     document.addEventListener('DOMContentLoaded', () => {
@@ -197,6 +181,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
         applyTranslations();
       }
     });
+
   } else {
     if (D4DEBUG_DISPLAY) console.log('[D4T] Extension is disabled');
   }
