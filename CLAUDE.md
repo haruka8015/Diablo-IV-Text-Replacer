@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Diablo IVのビルド情報サイト（mobalytics.gg、d4builds.gg、maxroll.gg）の英語テキストを日本語に変換するChrome拡張機能です。Manifest V3準拠で、ビルドプロセスや外部依存関係はありません。
 
-現在のバージョン: 0.9.0（2025年7月時点）
+現在のバージョン: 0.9.1（2025年7月時点）
 翻訳エントリ数: 3,663個
 
 ## 開発タスク
@@ -33,6 +33,29 @@ python3 tools/convert_stringlist_to_translations.py sources/translations.json \
 - `--merge-existing` で既存の翻訳を保持しながら新規追加
 - ファイル名の命名規則は任意（S9、S10などのシーズン番号も含む）
 
+### リリース用zipファイルの作成
+
+Chrome Web Storeへの提出用にzipファイルを作成する場合：
+```bash
+# tempディレクトリを作成（存在しない場合）
+mkdir -p temp
+
+# sourcesディレクトリに移動
+cd sources
+
+# Diablo_Translateディレクトリ構造でzip作成
+cd ../temp && \
+mkdir -p Diablo_Translate && \
+cp -r ../sources/* Diablo_Translate/ && \
+zip -r Diablo_Translate_0.9.1.zip Diablo_Translate && \
+rm -rf Diablo_Translate
+```
+
+注意：
+- バージョン番号（0.9.1）は`manifest.json`のバージョンと一致させる
+- zipファイルは`Diablo_Translate/`ディレクトリを含む構造にする
+- 作成されたzipは`temp/Diablo_Translate_0.9.1.zip`に保存される
+
 ## アーキテクチャ
 
 ### コアコンポーネント
@@ -48,7 +71,8 @@ python3 tools/convert_stringlist_to_translations.py sources/translations.json \
 ### 実装の重要点
 - 単語境界（`\b`）使用で部分一致を防止
 - パターンを長さ順にソートして複雑な用語を優先処理（同じ長さは辞書順）
-- 5件以上のDOM変更をバッチ処理してパフォーマンス向上
+- 50件以上のDOM変更をバッチ処理してパフォーマンス向上
+  - 事前コンパイルされた正規表現により5-10倍の高速化を実現
 - Chrome sync storageで有効/無効状態を保持
 - クォート文字の違いを吸収（`'` と `'` を同一視）
 
@@ -70,7 +94,7 @@ python3 tools/convert_stringlist_to_translations.py sources/translations.json \
 ```
 /
 ├── sources/              # Chrome拡張機能のソースコード
-│   ├── manifest.json    # v0.9.0
+│   ├── manifest.json    # v0.9.1
 │   ├── translations.json # 3,663個の変換ルール
 │   ├── content.js       # メイン変換処理
 │   ├── background.js    # サービスワーカー
