@@ -37,24 +37,13 @@ python3 tools/convert_stringlist_to_translations.py sources/translations.json \
 
 Chrome Web Storeへの提出用にzipファイルを作成する場合：
 ```bash
-# tempディレクトリを作成（存在しない場合）
-mkdir -p temp
-
-# sourcesディレクトリに移動
-cd sources
-
-# Diablo_Translateディレクトリ構造でzip作成
-cd ../temp && \
-mkdir -p Diablo_Translate && \
-cp -r ../sources/* Diablo_Translate/ && \
-zip -r Diablo_Translate_0.9.1.zip Diablo_Translate && \
-rm -rf Diablo_Translate
+./tools/create_release_zip.sh
 ```
 
-注意：
-- バージョン番号（0.9.1）は`manifest.json`のバージョンと一致させる
-- zipファイルは`Diablo_Translate/`ディレクトリを含む構造にする
-- 作成されたzipは`temp/Diablo_Translate_0.9.1.zip`に保存される
+このスクリプトは：
+- `manifest.json`からバージョンを自動取得
+- `temp/Diablo_Translate_{version}.zip`を作成
+- Chrome Web Storeが要求する`Diablo_Translate/`ディレクトリ構造で出力
 
 ## アーキテクチャ
 
