@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Diablo4 攻略サイト日本語化ツール",
-  "version": "0.9.2",
+  "version": "0.11.0",
   "description": "ビルドサイト(mobalytics,d4builds,maxroll)の一部を日本語名に変換します。",
   "permissions": [
     "activeTab",
