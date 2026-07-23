@@ -1,5 +1,6 @@
 # Temporary files
 temp/
+tmp/
 *.tmp
 *.temp
 

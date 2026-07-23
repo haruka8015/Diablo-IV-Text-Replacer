@@ -7,9 +7,28 @@ const DEBOUNCE_DOM_DELAY_MS = 100;
 // DOM変更に対するミューテーションの閾値を定義
 const DOM_CHANGE_MUTATION_THRESHOLD = 50;
 
+let extensionEnabled = false;
+
+// popup で状態が変わったら、開いているすべての対象タブへ即時反映する。
+// OFF時はリロードによって既に変換済みのDOMも元の表示へ戻す。
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'sync' || !changes.enabled) {
+    return;
+  }
+
+  const newEnabled = changes.enabled.newValue === true;
+  if (newEnabled === extensionEnabled) {
+    return;
+  }
+
+  extensionEnabled = newEnabled;
+  window.location.reload();
+});
+
 chrome.storage.sync.get(['enabled'], function(result) {
   if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded extension state:', result.enabled); // デバッグ用ログ
-  if (result.enabled) {
+  extensionEnabled = result.enabled === true;
+  if (extensionEnabled) {
     if (D4DEBUG_DISPLAY) console.log('[D4T] Content script loaded'); // デバッグ用ログ
 
     let translationTable = {};
@@ -146,6 +165,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
 
     function observeDOM(regexTable) {
       const observer = new MutationObserver(mutations => {
+        if (!extensionEnabled) {
+          return;
+        }
         if (D4DEBUG_DISPLAY) {
           console.log(`[D4T] Number of mutations observed: ${mutations.length}`);
         }
@@ -191,9 +213,15 @@ chrome.storage.sync.get(['enabled'], function(result) {
     }
 
     function applyTranslations() {
+      if (!extensionEnabled) {
+        return;
+      }
       if (D4DEBUG_DISPLAY) console.log('[D4T] applyTranslations started'); // デバッグ用ログ
       const startTime = performance.now();
       loadTranslations().then(regexTable => {
+        if (!extensionEnabled) {
+          return;
+        }
         if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded regexTable:', regexTable); // デバッグ用ログ
         const replaceStartTime = performance.now();
         const textStats = replaceText(document.body, regexTable);
@@ -221,6 +249,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
 
       // 新しいタイマーを設定
       debounceTimer = setTimeout(() => {
+        if (!extensionEnabled) {
+          return;
+        }
         if (D4DEBUG_DISPLAY) console.log('[D4T] Timeout completed'); // デバッグ用ログ
         applyTranslations();
       }, DEBOUNCE_DELAY_MS);
@@ -245,7 +276,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
     }
 
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message.action === 'convert') {
+      if (message.action === 'convert' && extensionEnabled) {
         if (D4DEBUG_DISPLAY) console.log('[D4T] Manual convert triggered'); // デバッグ用ログ
         applyTranslations();
       }

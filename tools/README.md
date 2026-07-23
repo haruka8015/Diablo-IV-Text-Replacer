@@ -2,6 +2,32 @@
 
 このディレクトリには、translations.json を管理するためのPythonツールが含まれています。
 
+## merge_csv_translations.py
+
+`SNO,FileName,Index,KeyHash,Key,Translation` 形式の英語・日本語 CSV を
+複合キーで対応付け、`sources/translations.json` に追加します。既存訳は維持され、
+文字化けした日本語、対応のない行、同じ英語に対する競合訳は自動的に除外されます。
+
+```bash
+# まず追加件数や文字化け件数だけを確認
+python tools/merge_csv_translations.py \
+  --en tmp/S14/en.csv --ja tmp/S14/ja.csv --dry-run
+
+# 確認後に sources/translations.json を更新
+python tools/merge_csv_translations.py \
+  --en tmp/S14/en.csv --ja tmp/S14/ja.csv
+
+# 対象カテゴリを限定する例
+python tools/merge_csv_translations.py output.json \
+  --en tmp/S14/en.csv --ja tmp/S14/ja.csv \
+  --categories items,affixes,paragon
+```
+
+既定カテゴリは `attributes,items,affixes,rare-names,powers,paragon,skills`
+です。レシピ名も必要な場合は `recipes` を `--categories` に追加できます。
+`--list-categories` で内容を確認できます。既存訳を CSV で置き換える場合だけ
+`--overwrite-existing` を指定してください。
+
 ## 現在使用中のツール
 
 ## convert_stringlist_to_translations.py

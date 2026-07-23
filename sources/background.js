@@ -1,25 +1,9 @@
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.sync.set({ enabled: true });
-  console.log('[D4T] Extension installed and enabled');
-});
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && /^http/.test(tab.url)) {
-    chrome.storage.sync.get(['enabled'], function(result) {
-      if (result.enabled) {
-        if (chrome.scripting && chrome.scripting.executeScript) {
-          chrome.scripting.executeScript({
-            target: { tabId: tabId },
-            files: ['content.js']
-          }, () => {
-            if (chrome.runtime.lastError) {
-              console.error('[D4T] ' + chrome.runtime.lastError.message);
-            }
-          });
-        } else {
-          console.error('[D4T] chrome.scripting or chrome.scripting.executeScript is not available.');
-        }
-      }
-    });
-  }
+  chrome.storage.sync.get(['enabled'], function(result) {
+    // 初回インストール時だけ有効化する。更新・再読み込み時はユーザー設定を維持する。
+    if (typeof result.enabled === 'undefined') {
+      chrome.storage.sync.set({ enabled: true });
+      console.log('[D4T] Extension installed and enabled');
+    }
+  });
 });
