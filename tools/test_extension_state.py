@@ -60,6 +60,14 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertEqual(translations["Incarnate"], "顕現")
         self.assertEqual(translations["Centipede"], "センティピード")
 
+    def test_maxroll_spiritborn_affix_short_names_have_translations(self):
+        translations = json.loads(self.source("translations.json"))
+        self.assertEqual(translations["Pestilence"], "悪疫")
+        self.assertEqual(translations["Infestation"], "寄生する毒虫")
+        self.assertEqual(translations["Kinetic Suppression"], "動的制圧")
+        self.assertEqual(translations["Apprehension"], "危惧")
+        self.assertEqual(translations["Fleet Wings"], "速やかなる羽")
+
 
 if __name__ == "__main__":
     unittest.main()

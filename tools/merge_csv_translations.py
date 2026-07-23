@@ -76,6 +76,16 @@ def _is_legacy_item_file(file_name: str) -> bool:
     )
 
 
+def _is_legendary_affix_file(file_name: str) -> bool:
+    return file_name.startswith(
+        (
+            "Affix_legendary_",
+            "Affix_x1_legendary_",
+            "Affix_S05_BSK_",
+        )
+    )
+
+
 def _is_paragon_name_row(row: CsvRow) -> bool:
     if row.file_name.startswith(
         ("ParagonBoard_", "ParagonNode_", "ParagonGlyph_")
@@ -324,6 +334,18 @@ def make_translation_pair(english: str, japanese: str) -> tuple[str, str, str | 
     return english, japanese, None
 
 
+def make_affix_alias_pairs(key: str, value: str) -> list[tuple[str, str]]:
+    """`of X` 形式からMaxroll向け短縮名と `Aspect of X` を生成する。"""
+    if not key.startswith("of ") or len(key) <= 3:
+        return []
+
+    short_value = value[:-1] if value.endswith("の") else value
+    return [
+        (key[3:], short_value),
+        (f"Aspect {key}", f"{value}化身"),
+    ]
+
+
 def selected_category(row: CsvRow, categories: Iterable[str]) -> str | None:
     for category in categories:
         if RULES[category].matches(row):
@@ -409,19 +431,24 @@ def merge_csv_files(
             stats[f"rejected:{rejection}"] += 1
             continue
 
-        if key in conflicts:
-            stats["conflict-row"] += 1
-            continue
-        previous = candidates.get(key)
-        if previous and previous[0] != value:
-            del candidates[key]
-            conflicts.add(key)
-            stats["conflict-key"] += 1
-            continue
-        if previous:
-            stats["duplicate-pair"] += 1
-            continue
-        candidates[key] = (value, category)
+        pairs = [(key, value)]
+        if category == "affixes" and _is_legendary_affix_file(en_row.file_name):
+            pairs.extend(make_affix_alias_pairs(key, value))
+
+        for candidate_key, candidate_value in pairs:
+            if candidate_key in conflicts:
+                stats["conflict-row"] += 1
+                continue
+            previous = candidates.get(candidate_key)
+            if previous and previous[0] != candidate_value:
+                del candidates[candidate_key]
+                conflicts.add(candidate_key)
+                stats["conflict-key"] += 1
+                continue
+            if previous:
+                stats["duplicate-pair"] += 1
+                continue
+            candidates[candidate_key] = (candidate_value, category)
 
     merged = dict(existing)
     for key, (value, category) in candidates.items():

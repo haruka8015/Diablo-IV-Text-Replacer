@@ -137,6 +137,24 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         _, _, reason = merge_tool.make_translation_pair("Axe", "�")
         self.assertEqual(reason, "corrupt")
 
+    def test_affix_aliases_cover_maxroll_short_names(self):
+        self.assertEqual(
+            merge_tool.make_affix_alias_pairs("of Pestilence", "悪疫の"),
+            [
+                ("Pestilence", "悪疫"),
+                ("Aspect of Pestilence", "悪疫の化身"),
+            ],
+        )
+        self.assertEqual(
+            merge_tool.make_affix_alias_pairs(
+                "of Kinetic Suppression", "動的制圧の"
+            ),
+            [
+                ("Kinetic Suppression", "動的制圧"),
+                ("Aspect of Kinetic Suppression", "動的制圧の化身"),
+            ],
+        )
+
     def test_paragon_node_color_tags_are_removed(self):
         cases = (
             (
@@ -195,6 +213,44 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             self.assertEqual(merged, {"Axe": "既存の斧"})
             self.assertEqual(report["counts"]["kept-existing"], 1)
             self.assertEqual(report["counts"]["conflict-key"], 1)
+
+    def test_merge_adds_maxroll_affix_aliases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            en_path = root / "en.csv"
+            ja_path = root / "ja.csv"
+            rows_en = [
+                [
+                    "1",
+                    "Affix_legendary_spiritborn_test",
+                    "0",
+                    "10",
+                    "Name",
+                    "of Apprehension",
+                ]
+            ]
+            rows_ja = [
+                [
+                    "1",
+                    "Affix_legendary_spiritborn_test",
+                    "0",
+                    "10",
+                    "Name",
+                    "危惧の",
+                ]
+            ]
+            for path, rows in ((en_path, rows_en), (ja_path, rows_ja)):
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    writer.writerows(rows)
+
+            merged, _ = merge_tool.merge_csv_files(en_path, ja_path, {})
+            self.assertEqual(merged["of Apprehension"], "危惧の")
+            self.assertEqual(merged["Apprehension"], "危惧")
+            self.assertEqual(
+                merged["Aspect of Apprehension"], "危惧の化身"
+            )
 
     def test_paragon_glyph_labels_override_rare_name_fragment(self):
         with tempfile.TemporaryDirectory() as directory:
