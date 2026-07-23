@@ -125,20 +125,54 @@ chrome.storage.sync.get(['enabled'], function(result) {
       return text;
     }
 
-    function replaceText(node, regexTable, stats = {nodes: 0, attempts: 0, replacements: 0, chars: 0}) {
-      if (node.nodeType === 3) { // テキストノード
-        stats.nodes++;
-        stats.chars += node.nodeValue.length;
-        let originalText = node.nodeValue;
-        let newText = applyRegexTransformations(node.nodeValue, regexTable, stats);
-        if (newText !== originalText && D4DEBUG_DISPLAY) {
-          console.log('[D4T] Text changed from:', originalText, 'to:', newText); // デバッグ用ログ
+    function replaceTextNodeRun(textNodes, regexTable, stats) {
+      const originalText = textNodes.map(textNode => textNode.nodeValue).join('');
+      stats.nodes += textNodes.length;
+      stats.chars += originalText.length;
+
+      const newText = applyRegexTransformations(originalText, regexTable, stats);
+      if (newText === originalText) {
+        return;
+      }
+
+      if (D4DEBUG_DISPLAY) {
+        console.log('[D4T] Text changed from:', originalText, 'to:', newText);
+      }
+
+      // Reactなどが保持しているノード自体は削除せず、連続テキストの先頭へ結果を格納する。
+      // 残りを空文字にすることで、要素構造を変えずにノード境界をまたぐ語句を変換できる。
+      textNodes.forEach((textNode, index) => {
+        const replacement = index === 0 ? newText : '';
+        if (textNode.nodeValue !== replacement) {
+          textNode.nodeValue = replacement;
         }
-        node.nodeValue = newText;
-      } else if (node.nodeType === 1 && !['SCRIPT', 'STYLE'].includes(node.tagName)) { // 要素ノードでスクリプトとスタイルを除外
-        let childNodes = Array.from(node.childNodes);
-        for (let child of childNodes) {
-          replaceText(child, regexTable, stats);
+      });
+    }
+
+    function replaceText(node, regexTable, stats = {nodes: 0, attempts: 0, replacements: 0, chars: 0}) {
+      if (node.nodeType === 3) {
+        replaceTextNodeRun([node], regexTable, stats);
+      } else if (
+        node.nodeType === 1 &&
+        !['SCRIPT', 'STYLE', 'TEXTAREA'].includes(node.tagName) &&
+        !node.isContentEditable
+      ) {
+        const childNodes = Array.from(node.childNodes);
+
+        for (let index = 0; index < childNodes.length;) {
+          const child = childNodes[index];
+          if (child.nodeType !== 3) {
+            replaceText(child, regexTable, stats);
+            index++;
+            continue;
+          }
+
+          const textNodes = [];
+          while (index < childNodes.length && childNodes[index].nodeType === 3) {
+            textNodes.push(childNodes[index]);
+            index++;
+          }
+          replaceTextNodeRun(textNodes, regexTable, stats);
         }
       }
       return stats;

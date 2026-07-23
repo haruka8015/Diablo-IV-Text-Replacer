@@ -53,10 +53,56 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         )
         self.assertEqual(
             merge_tool.selected_category(
+                row("SkillTags", "Skill_Spirit_Forest_TagName"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "skills",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
                 row("ParagonBoardUI", "NodeTypeMagic"),
                 merge_tool.DEFAULT_CATEGORIES,
             ),
             "paragon",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("ParagonBoardUI", "NodeTypeLegendary"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "paragon",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("ParagonBoardUI", "GlyphRarity_Legendary"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "paragon",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                merge_tool.CsvRow(
+                    ("1", "ItemLabels", "39", "2", "Glyph"),
+                    "ItemLabels",
+                    "Glyph",
+                    "Glyph",
+                    2,
+                ),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "paragon",
+        )
+        self.assertIsNone(
+            merge_tool.selected_category(
+                merge_tool.CsvRow(
+                    ("1", "RareNameStrings_Prefix", "23", "2", "ArmorP024"),
+                    "RareNameStrings_Prefix",
+                    "ArmorP024",
+                    "Glyph",
+                    2,
+                ),
+                merge_tool.DEFAULT_CATEGORIES,
+            )
         )
         self.assertEqual(
             merge_tool.selected_category(
@@ -92,13 +138,35 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertEqual(reason, "corrupt")
 
     def test_paragon_node_color_tags_are_removed(self):
-        key, value, reason = merge_tool.make_translation_pair(
-            "{c_magic}Magic Node", "{c_magic} マジック・ノード"
+        cases = (
+            (
+                "{c_magic}Magic Node",
+                "{c_magic} マジック・ノード",
+                "Magic Node",
+                "マジック・ノード",
+            ),
+            (
+                "{c_legendary}Legendary Node",
+                "{c_legendary} レジェンダリー・ノード",
+                "Legendary Node",
+                "レジェンダリー・ノード",
+            ),
+            (
+                "{c_legendary}Legendary Glyph{/c}",
+                "{c_legendary}レジェンダリー・グリフ{/c}",
+                "Legendary Glyph",
+                "レジェンダリー・グリフ",
+            ),
         )
-        self.assertIsNone(reason)
-        self.assertEqual(key, "Magic Node")
-        self.assertEqual(value, "マジック・ノード")
-        self.assertNotIn("{", key + value)
+        for english, japanese, expected_key, expected_value in cases:
+            with self.subTest(english=english):
+                key, value, reason = merge_tool.make_translation_pair(
+                    english, japanese
+                )
+                self.assertIsNone(reason)
+                self.assertEqual(key, expected_key)
+                self.assertEqual(value, expected_value)
+                self.assertNotIn("{", key + value)
 
     def test_existing_wins_and_ambiguous_new_key_is_skipped(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -127,6 +195,61 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             self.assertEqual(merged, {"Axe": "既存の斧"})
             self.assertEqual(report["counts"]["kept-existing"], 1)
             self.assertEqual(report["counts"]["conflict-key"], 1)
+
+    def test_paragon_glyph_labels_override_rare_name_fragment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            en_path = root / "en.csv"
+            ja_path = root / "ja.csv"
+            rows_en = [
+                ["1", "ItemLabels", "39", "10", "Glyph", "Glyph"],
+                [
+                    "2",
+                    "RareNameStrings_Prefix",
+                    "23",
+                    "11",
+                    "ArmorP024",
+                    "Glyph",
+                ],
+                [
+                    "3",
+                    "ParagonBoardUI",
+                    "111",
+                    "12",
+                    "GlyphRarity_Legendary",
+                    "{c_legendary}Legendary Glyph{/c}",
+                ],
+            ]
+            rows_ja = [
+                ["1", "ItemLabels", "39", "10", "Glyph", "グリフ"],
+                [
+                    "2",
+                    "RareNameStrings_Prefix",
+                    "23",
+                    "11",
+                    "ArmorP024",
+                    "グリフ刻まれし",
+                ],
+                [
+                    "3",
+                    "ParagonBoardUI",
+                    "111",
+                    "12",
+                    "GlyphRarity_Legendary",
+                    "{c_legendary}レジェンダリー・グリフ{/c}",
+                ],
+            ]
+            for path, rows in ((en_path, rows_en), (ja_path, rows_ja)):
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    writer.writerows(rows)
+
+            merged, _ = merge_tool.merge_csv_files(en_path, ja_path, {})
+            self.assertEqual(merged["Glyph"], "グリフ")
+            self.assertEqual(
+                merged["Legendary Glyph"], "レジェンダリー・グリフ"
+            )
 
     def test_unique_fallback_match_allows_different_csv_index(self):
         with tempfile.TemporaryDirectory() as directory:

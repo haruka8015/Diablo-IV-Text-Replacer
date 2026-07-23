@@ -82,7 +82,16 @@ def _is_paragon_name_row(row: CsvRow) -> bool:
     ):
         return row.key in PARAGON_FIELDS
     if row.file_name == "ParagonBoardUI":
-        return row.key in {"NodeTypeMagic", "NodeTypeRare"}
+        return row.key in {
+            "NodeTypeMagic",
+            "NodeTypeRare",
+            "NodeTypeLegendary",
+            "GlyphRarity_Magic",
+            "GlyphRarity_Rare",
+            "GlyphRarity_Legendary",
+        }
+    if row.file_name == "ItemLabels":
+        return row.key == "Glyph" and clean_color_tags(row.translation) == "Glyph"
     return (
         row.file_name == "UITestStrings"
         and row.key == "Common"
@@ -123,8 +132,11 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             Rule(
                 "rare-names",
                 "RareNameStrings のランダムアイテム名断片",
-                lambda row: row.file_name == "RareNameStrings"
-                or row.file_name.startswith("RareNameStrings_"),
+                lambda row: (
+                    row.file_name == "RareNameStrings"
+                    or row.file_name.startswith("RareNameStrings_")
+                )
+                and clean_color_tags(row.translation) != "Glyph",
             ),
         ),
         (
@@ -151,7 +163,7 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                 "スキル名とスキルタグ名",
                 lambda row: (
                     row.file_name.startswith("Skill_")
-                    or row.file_name == "SkillTagNames"
+                    or row.file_name in {"SkillTags", "SkillTagNames"}
                 ),
             ),
         ),

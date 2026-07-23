@@ -1,3 +1,4 @@
+import json
 import unittest
 from pathlib import Path
 
@@ -26,6 +27,38 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("convertButton.disabled = !enabled", popup)
         self.assertIn("result.enabled !== true", popup)
         self.assertNotIn("chrome.tabs.reload", popup)
+
+    def test_adjacent_text_nodes_are_translated_without_rebuilding_elements(self):
+        content = self.source("content.js")
+        self.assertIn("function replaceTextNodeRun", content)
+        self.assertIn("textNodes.map(textNode => textNode.nodeValue).join('')", content)
+        self.assertIn("textNode.nodeValue = replacement", content)
+        self.assertNotIn(".normalize()", content)
+        self.assertNotIn(".textContent =", content)
+        self.assertIn("'TEXTAREA'", content)
+        self.assertIn("!node.isContentEditable", content)
+
+    def test_all_paragon_node_types_have_translations(self):
+        translations = json.loads(self.source("translations.json"))
+        self.assertEqual(translations["Common Node"], "コモン・ノード")
+        self.assertEqual(translations["Magic Node"], "マジック・ノード")
+        self.assertEqual(translations["Rare Node"], "レア・ノード")
+        self.assertEqual(
+            translations["Legendary Node"], "レジェンダリー・ノード"
+        )
+        self.assertEqual(translations["Glyph"], "グリフ")
+        self.assertEqual(translations["Magic Glyph"], "マジック・グリフ")
+        self.assertEqual(translations["Rare Glyph"], "レア・グリフ")
+        self.assertEqual(
+            translations["Legendary Glyph"], "レジェンダリー・グリフ"
+        )
+
+    def test_spiritborn_skill_categories_have_translations(self):
+        translations = json.loads(self.source("translations.json"))
+        self.assertEqual(translations["Gorilla"], "ゴリラ")
+        self.assertEqual(translations["Jaguar"], "ジャガー")
+        self.assertEqual(translations["Incarnate"], "顕現")
+        self.assertEqual(translations["Centipede"], "センティピード")
 
 
 if __name__ == "__main__":
