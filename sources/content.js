@@ -4,10 +4,8 @@ const D4DEBUG_DISPLAY = false;
 const DEBOUNCE_DELAY_MS = 1000;
 // DOM変化時のデバウンス遅延時間を定義
 const DEBOUNCE_DOM_DELAY_MS = 100;
-// DOM変更に対するミューテーションの閾値を定義
-const DOM_CHANGE_MUTATION_THRESHOLD = 50;
-
 let extensionEnabled = false;
+let guideTranslationEnabled = true;
 
 const BLOCK_BOUNDARY_TAGS = new Set([
   'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'BR', 'DIV', 'DL', 'DT', 'DD',
@@ -23,26 +21,60 @@ const LONG_TEXT_TOOLTIP_SELECTOR =
   '.d4t-GameTooltip, .d4t-SkillTagTooltip';
 const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li';
 const DROP_SOURCE_KEY_PREFIX = '__D4T_DROP_SOURCE__:';
+const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
+const MAXROLL_GUIDE_BLOCK_SELECTOR = [
+  'main article h1',
+  '.maxroll-rich-text-editor p',
+  '.maxroll-rich-text-editor li',
+  '.maxroll-rich-text-editor :is(h1, h2, h3, h4, h5, h6) strong',
+  '.maxroll-rich-text-editor ' +
+    ':is(h1, h2, h3, h4, h5, h6) > span:not(:has(strong, em))',
+  '.maxroll-rich-text-editor ' +
+    ':is(h1, h2, h3, h4, h5, h6):not(:has(span, strong, em))',
+  '.maxroll-rich-text-editor blockquote',
+  '.maxroll-rich-text-editor figcaption',
+  '.maxroll-rich-text-editor td',
+  '.maxroll-rich-text-editor th',
+  '[class*="_PlannerPageSection__content_"] > div > p',
+  '[id$="-header"] > [class*="_PlannerPageSectionHeading__title_"]',
+  '[class*="_PostTopSection__gameVersion_"]',
+  '[class*="_StrAndWeak__blockListItemText_"]',
+  '[class*="_D4PlannerPageLevelingPostList__header_"]',
+  '[class*="_D4PlannerPageQuote_"]',
+  '[class*="_ArticleAccordion__itemHeaderTitle_"] ' +
+    '.maxroll-rich-text-editor > div > span',
+  '[class*="_ArticleChangelog__itemHeaderTitle_"] ' +
+    '.maxroll-rich-text-editor > div > span'
+].join(', ');
+const GUIDE_TOKEN_PATTERN = /ZXQJ\d{4}QJQXZ/g;
+const GUIDE_TOKEN_PADDED_PATTERN = /\s*(ZXQJ\d{4}QJQXZ)\s*/g;
+const GUIDE_TRANSLATION_MAX_ATTEMPTS = 2;
 
 // popup で状態が変わったら、開いているすべての対象タブへ即時反映する。
 // OFF時はリロードによって既に変換済みのDOMも元の表示へ戻す。
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== 'sync' || !changes.enabled) {
+  if (
+    areaName !== 'sync' ||
+    (!changes.enabled && !changes.guideTranslationEnabled)
+  ) {
     return;
   }
 
-  const newEnabled = changes.enabled.newValue === true;
-  if (newEnabled === extensionEnabled) {
-    return;
-  }
-
-  extensionEnabled = newEnabled;
+  extensionEnabled = changes.enabled
+    ? changes.enabled.newValue === true
+    : extensionEnabled;
+  guideTranslationEnabled = changes.guideTranslationEnabled
+    ? changes.guideTranslationEnabled.newValue !== false
+    : guideTranslationEnabled;
   window.location.reload();
 });
 
-chrome.storage.sync.get(['enabled'], function(result) {
+chrome.storage.sync.get(
+  ['enabled', 'guideTranslationEnabled'],
+  function(result) {
   if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded extension state:', result.enabled); // デバッグ用ログ
   extensionEnabled = result.enabled === true;
+  guideTranslationEnabled = result.guideTranslationEnabled !== false;
   if (extensionEnabled) {
     if (D4DEBUG_DISPLAY) console.log('[D4T] Content script loaded'); // デバッグ用ログ
 
@@ -50,6 +82,8 @@ chrome.storage.sync.get(['enabled'], function(result) {
     let dropSourceTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
+    let activeRegexTable = null;
+    let domObserverStarted = false;
 
     function createTranslationRegex(pattern) {
       // Maxroll側のタイポグラフィ変換でASCIIの'が’になる場合も照合する。
@@ -220,6 +254,677 @@ chrome.storage.sync.get(['enabled'], function(result) {
         text = newText;
       }
       return text;
+    }
+
+    const guideBlockRecords = new WeakMap();
+    const pendingGuideRoots = new Set();
+    let guideTranslationQueue = Promise.resolve();
+    let guideTranslationQueued = false;
+    let guideTranslatorAvailability = null;
+    let guideTranslationSuspended = false;
+    let guideIntersectionObserver = null;
+    const pendingGuideViewportBlocks = new Set();
+    let guideScrollTimer = null;
+    let guideScrollListenerStarted = false;
+
+    function createGuideTokenAllocator(sourceText) {
+      GUIDE_TOKEN_PATTERN.lastIndex = 0;
+      if (GUIDE_TOKEN_PATTERN.test(sourceText)) {
+        GUIDE_TOKEN_PATTERN.lastIndex = 0;
+        return null;
+      }
+      GUIDE_TOKEN_PATTERN.lastIndex = 0;
+
+      let nextTokenId = 0;
+      const tokens = new Map();
+      return {
+        tokens,
+        allocate(payload) {
+          if (nextTokenId > 9999) {
+            throw new RangeError('Maxroll guide block has too many tokens');
+          }
+          const token =
+            `ZXQJ${String(nextTokenId++).padStart(4, '0')}QJQXZ`;
+          tokens.set(token, payload);
+          return token;
+        }
+      };
+    }
+
+    function forEachGuideTextPart(text, callback) {
+      GUIDE_TOKEN_PATTERN.lastIndex = 0;
+      let cursor = 0;
+      for (const match of text.matchAll(GUIDE_TOKEN_PATTERN)) {
+        if (match.index > cursor) {
+          callback({type: 'text', value: text.slice(cursor, match.index)});
+        }
+        callback({type: 'token', value: match[0]});
+        cursor = match.index + match[0].length;
+      }
+      if (cursor < text.length) {
+        callback({type: 'text', value: text.slice(cursor)});
+      }
+      GUIDE_TOKEN_PATTERN.lastIndex = 0;
+    }
+
+    function applyGuideDictionary(text, regexTable) {
+      let result = '';
+      forEachGuideTextPart(text, part => {
+        result += part.type === 'token'
+          ? part.value
+          : applyRegexTransformations(part.value, regexTable);
+      });
+      return result;
+    }
+
+    function prepareGuideTranslationInput(text) {
+      return text.replace(GUIDE_TOKEN_PATTERN, token => ` ${token} `);
+    }
+
+    function normalizeGuideTranslationTokens(text) {
+      return text.replace(
+        GUIDE_TOKEN_PADDED_PATTERN,
+        (match, token) => token
+      );
+    }
+
+    function isMaxrollGuideNode(node) {
+      const element = node?.nodeType === 3 ? node.parentElement : node;
+      return Boolean(
+        element?.nodeType === 1 &&
+        element.closest(MAXROLL_GUIDE_BLOCK_SELECTOR)
+      );
+    }
+
+    function isD4SemanticElement(element) {
+      return (
+        element.hasAttribute('data-d4-id') ||
+        Array.from(element.classList).some(className =>
+          className === 'd4-tag' || className.startsWith('d4-')
+        )
+      );
+    }
+
+    function isAtomicGuideElement(element) {
+      return (
+        isD4SemanticElement(element) ||
+        ['BR', 'IMG', 'SVG', 'VIDEO', 'AUDIO', 'CANVAS'].includes(
+          element.tagName
+        )
+      );
+    }
+
+    function shouldKeepGuideWrapper(element) {
+      if (element.tagName !== 'SPAN') {
+        return true;
+      }
+      return (
+        element.attributes.length > 0 ||
+        element.classList.length > 0
+      );
+    }
+
+    function setElementTextPreservingMarkup(element, value) {
+      if (!value || ['BR', 'IMG', 'SVG'].includes(element.tagName)) {
+        return;
+      }
+
+      const textNodes = [];
+      function collectTextNodes(node) {
+        node.childNodes.forEach(child => {
+          if (child.nodeType === 3) {
+            textNodes.push(child);
+            return;
+          }
+          if (
+            child.nodeType !== 1 ||
+            ['SCRIPT', 'STYLE', 'SVG'].includes(child.tagName)
+          ) {
+            return;
+          }
+          collectTextNodes(child);
+        });
+      }
+      collectTextNodes(element);
+
+      if (!textNodes.length) {
+        element.appendChild(document.createTextNode(value));
+        return;
+      }
+      textNodes.forEach((textNode, index) => {
+        textNode.nodeValue = index === 0 ? value : '';
+      });
+    }
+
+    async function translateGuideTextNodesInPlace(block, regexTable) {
+      const textNodes = [];
+
+      function collect(node) {
+        node.childNodes.forEach(child => {
+          if (child.nodeType === 3) {
+            if (/[A-Za-z]{2}/.test(child.nodeValue)) {
+              textNodes.push(child);
+            }
+            return;
+          }
+          if (
+            child.nodeType !== 1 ||
+            IGNORED_TEXT_TAGS.has(child.tagName) ||
+            isD4SemanticElement(child)
+          ) {
+            return;
+          }
+          collect(child);
+        });
+      }
+      collect(block);
+
+      const replacements = [];
+      for (const textNode of textNodes) {
+        const response = await sendBackgroundMessage({
+          action: 'translateText',
+          text: textNode.nodeValue
+        });
+        if (!response.ok) {
+          return false;
+        }
+        replacements.push([
+          textNode,
+          applyRegexTransformations(response.text, regexTable)
+        ]);
+      }
+
+      replacements.forEach(([textNode, value]) => {
+        textNode.nodeValue = value;
+      });
+      block.querySelectorAll(
+        '[data-d4-id], [class*="d4-"]'
+      ).forEach(element => {
+        if (!isD4SemanticElement(element)) {
+          return;
+        }
+        const label = applyRegexTransformations(
+          element.textContent,
+          regexTable
+        );
+        setElementTextPreservingMarkup(element, label);
+      });
+      return replacements.length > 0;
+    }
+
+    function prepareGuideBlock(block, regexTable) {
+      const originalText = block.textContent;
+      const allocator = createGuideTokenAllocator(originalText);
+      if (!allocator) {
+        return null;
+      }
+
+      let source = '';
+
+      function serializeNode(node) {
+        if (node.nodeType === 3) {
+          source += node.nodeValue;
+          return;
+        }
+        if (
+          node.nodeType !== 1 ||
+          IGNORED_TEXT_TAGS.has(node.tagName)
+        ) {
+          return;
+        }
+
+        if (isAtomicGuideElement(node)) {
+          const label = node.textContent
+            ? applyRegexTransformations(node.textContent, regexTable)
+            : '';
+          source += allocator.allocate({
+            type: 'node',
+            node,
+            label
+          });
+          return;
+        }
+
+        if (shouldKeepGuideWrapper(node)) {
+          const openToken = allocator.allocate({
+            type: 'open',
+            node
+          });
+          const closeToken = allocator.allocate({
+            type: 'close',
+            node
+          });
+          source += openToken;
+          node.childNodes.forEach(serializeNode);
+          source += closeToken;
+          return;
+        }
+
+        node.childNodes.forEach(serializeNode);
+      }
+
+      block.childNodes.forEach(serializeNode);
+
+      return {
+        source,
+        tokens: allocator.tokens,
+        status: 'prepared',
+        renderedText: null
+      };
+    }
+
+    function validateGuideTranslation(text, tokens) {
+      const counts = new Map(
+        Array.from(tokens.keys(), token => [token, 0])
+      );
+      const wrapperStack = [];
+      let valid = true;
+
+      forEachGuideTextPart(text, part => {
+        if (part.type !== 'token') {
+          return;
+        }
+        const payload = tokens.get(part.value);
+        if (!payload) {
+          valid = false;
+          return;
+        }
+        counts.set(part.value, counts.get(part.value) + 1);
+
+        if (payload.type === 'open') {
+          wrapperStack.push(payload.node);
+        } else if (payload.type === 'close') {
+          if (
+            !wrapperStack.length ||
+            wrapperStack.pop() !== payload.node
+          ) {
+            valid = false;
+          }
+        }
+      });
+
+      return (
+        valid &&
+        wrapperStack.length === 0 &&
+        Array.from(counts.values()).every(count => count === 1)
+      );
+    }
+
+    function renderGuideBlock(block, text, tokens) {
+      if (!validateGuideTranslation(text, tokens)) {
+        return false;
+      }
+
+      const rootFragment = document.createDocumentFragment();
+      const stack = [{fragment: rootFragment, node: null}];
+      let plainText = '';
+
+      function currentFragment() {
+        return stack[stack.length - 1].fragment;
+      }
+
+      function flushPlainText() {
+        if (plainText) {
+          currentFragment().appendChild(
+            document.createTextNode(plainText)
+          );
+          plainText = '';
+        }
+      }
+
+      forEachGuideTextPart(text, part => {
+        if (part.type !== 'token') {
+          plainText += part.value;
+          return;
+        }
+
+        flushPlainText();
+        const payload = tokens.get(part.value);
+        if (payload.type === 'node') {
+          setElementTextPreservingMarkup(payload.node, payload.label);
+          currentFragment().appendChild(payload.node);
+        } else if (payload.type === 'open') {
+          stack.push({
+            fragment: document.createDocumentFragment(),
+            node: payload.node
+          });
+        } else if (payload.type === 'close') {
+          const wrapper = stack.pop();
+          wrapper.node.replaceChildren(wrapper.fragment);
+          currentFragment().appendChild(wrapper.node);
+        }
+      });
+      flushPlainText();
+
+      if (stack.length !== 1) {
+        return false;
+      }
+      block.replaceChildren(rootFragment);
+      return true;
+    }
+
+    function sendBackgroundMessage(message) {
+      return new Promise(resolve => {
+        chrome.runtime.sendMessage(
+          {...message, target: 'background'},
+          response => {
+            if (chrome.runtime.lastError) {
+              resolve({
+                ok: false,
+                error: chrome.runtime.lastError.message
+              });
+              return;
+            }
+            resolve(response || {ok: false, error: 'No response'});
+          }
+        );
+      });
+    }
+
+    function isVisibleGuideBlock(block) {
+      let element = block;
+      while (element && element !== document.documentElement) {
+        if (
+          element.hidden ||
+          getComputedStyle(element).display === 'none' ||
+          getComputedStyle(element).visibility === 'hidden'
+        ) {
+          return false;
+        }
+        element = element.parentElement;
+      }
+      return true;
+    }
+
+    function collectGuideBlocks(root, visibleOnly = true) {
+      const element = root?.nodeType === 3 ? root.parentElement : root;
+      if (!element) {
+        return [];
+      }
+
+      const blocks = new Set();
+      const articles = new Set();
+      const elementIsDocument = element.nodeType === 9;
+
+      if (!elementIsDocument && element.nodeType === 1) {
+        const closestBlock = element.closest?.(
+          MAXROLL_GUIDE_BLOCK_SELECTOR
+        );
+        if (closestBlock) {
+          blocks.add(closestBlock);
+        }
+        if (element.matches?.(MAXROLL_GUIDE_BLOCK_SELECTOR)) {
+          blocks.add(element);
+        }
+
+        const closestArticle = element.closest?.(
+          MAXROLL_GUIDE_ROOT_SELECTOR
+        );
+        if (!closestArticle) {
+          element.querySelectorAll?.(MAXROLL_GUIDE_ROOT_SELECTOR)
+            .forEach(article => articles.add(article));
+        } else if (!closestBlock) {
+          element.querySelectorAll?.(MAXROLL_GUIDE_BLOCK_SELECTOR)
+            .forEach(block => blocks.add(block));
+        }
+      } else {
+        element.querySelectorAll?.(MAXROLL_GUIDE_ROOT_SELECTOR)
+          .forEach(article => articles.add(article));
+      }
+
+      articles.forEach(article => {
+        article.querySelectorAll(MAXROLL_GUIDE_BLOCK_SELECTOR)
+          .forEach(block => blocks.add(block));
+      });
+
+      return Array.from(blocks).filter(block =>
+        !block.querySelector(MAXROLL_GUIDE_BLOCK_SELECTOR) &&
+        (!visibleOnly || isVisibleGuideBlock(block)) &&
+        block.textContent.trim()
+      );
+    }
+
+    async function processMaxrollGuideRoot(root, regexTable) {
+      const blocks = collectGuideBlocks(root);
+      if (!blocks.length) {
+        return;
+      }
+
+      let translatorAvailable = false;
+      if (guideTranslationEnabled && !guideTranslationSuspended) {
+        if (guideTranslatorAvailability === null) {
+          const response = await sendBackgroundMessage({
+            action: 'translatorAvailability'
+          });
+          guideTranslatorAvailability = response.ok
+            ? response.availability
+            : 'error';
+        }
+        translatorAvailable =
+          guideTranslatorAvailability === 'available';
+      }
+
+      for (const block of blocks) {
+        if (!block.isConnected) {
+          continue;
+        }
+
+        let record = guideBlockRecords.get(block);
+        if (
+          record &&
+          record.renderedText !== null &&
+          block.textContent !== record.renderedText
+        ) {
+          guideBlockRecords.delete(block);
+          record = null;
+        }
+        if (!record) {
+          record = prepareGuideBlock(block, regexTable);
+          if (!record) {
+            continue;
+          }
+          record.attempts = 0;
+          guideBlockRecords.set(block, record);
+        }
+
+        if (record.status === 'translated') {
+          continue;
+        }
+        if (
+          record.status === 'fallback' &&
+          record.attempts >= GUIDE_TRANSLATION_MAX_ATTEMPTS
+        ) {
+          continue;
+        }
+        if (
+          record.status === 'dictionary' &&
+          !translatorAvailable
+        ) {
+          continue;
+        }
+
+        let output = record.source;
+        let nextStatus = 'dictionary';
+        const hasEnglishText = /[A-Za-z]{2}/.test(
+          record.source.replace(GUIDE_TOKEN_PATTERN, '')
+        );
+        if (D4DEBUG_DISPLAY) {
+          console.log('[D4T] Guide block prepared', {
+            source: record.source,
+            translatorAvailable,
+            guideTranslationEnabled,
+            hasEnglishText
+          });
+        }
+
+        if (
+          translatorAvailable &&
+          guideTranslationEnabled &&
+          hasEnglishText
+        ) {
+          record.attempts++;
+          const response = await sendBackgroundMessage({
+            action: 'translateText',
+            text: prepareGuideTranslationInput(record.source)
+          });
+          if (response.ok) {
+            response.text = normalizeGuideTranslationTokens(
+              response.text
+            );
+          }
+          if (
+            response.ok &&
+            record.tokens.size > 0 &&
+            !validateGuideTranslation(response.text, record.tokens)
+          ) {
+            const translatedInPlace =
+              await translateGuideTextNodesInPlace(block, regexTable);
+            if (translatedInPlace) {
+              record.status = 'translated';
+              record.renderedText = block.textContent;
+              continue;
+            }
+          }
+          if (
+            response.ok &&
+            validateGuideTranslation(response.text, record.tokens)
+          ) {
+            output = response.text;
+            nextStatus = 'translated';
+          } else if (response.ok) {
+            // 保護トークンが欠落・重複・破損した場合は、DOMを壊さず
+            // 辞書変換だけを表示し、上限回数まで再評価する。
+            nextStatus = 'fallback';
+          } else {
+            translatorAvailable = false;
+            guideTranslatorAvailability = null;
+            nextStatus = 'fallback';
+          }
+        }
+
+        output = applyGuideDictionary(output, regexTable);
+
+        if (
+          block.isConnected &&
+          renderGuideBlock(block, output, record.tokens)
+        ) {
+          record.status = nextStatus;
+          record.renderedText = block.textContent;
+        }
+      }
+    }
+
+    function queueMaxrollGuideTranslation(root, regexTable) {
+      if (!root) {
+        return;
+      }
+      pendingGuideRoots.add(root);
+      if (guideTranslationQueued) {
+        return;
+      }
+
+      guideTranslationQueued = true;
+      guideTranslationQueue = guideTranslationQueue
+        .then(async () => {
+          while (pendingGuideRoots.size > 0) {
+            const roots = Array.from(pendingGuideRoots);
+            pendingGuideRoots.clear();
+            for (const pendingRoot of roots) {
+              await processMaxrollGuideRoot(
+                pendingRoot,
+                regexTable
+              );
+            }
+          }
+        })
+        .catch(error => {
+          console.error('[D4T] Maxroll guide translation failed:', error);
+        })
+        .finally(() => {
+          guideTranslationQueued = false;
+          if (pendingGuideRoots.size > 0) {
+            queueMaxrollGuideTranslation(
+              pendingGuideRoots.values().next().value,
+              regexTable
+            );
+          }
+        });
+    }
+
+    function observeMaxrollGuideBlocks(root, regexTable) {
+      if (!guideTranslationEnabled || !('IntersectionObserver' in window)) {
+        queueMaxrollGuideTranslation(root, regexTable);
+        return;
+      }
+
+      function queueBlockIfNearViewport(block) {
+        if (!block.isConnected) {
+          pendingGuideViewportBlocks.delete(block);
+          return true;
+        }
+        const record = guideBlockRecords.get(block);
+        if (
+          record?.status === 'translated' ||
+          (
+            record?.status === 'fallback' &&
+            record.attempts >= GUIDE_TRANSLATION_MAX_ATTEMPTS
+          )
+        ) {
+          pendingGuideViewportBlocks.delete(block);
+          guideIntersectionObserver?.unobserve(block);
+          return true;
+        }
+
+        const bounds = block.getBoundingClientRect();
+        const nearViewport =
+          isVisibleGuideBlock(block) &&
+          bounds.bottom >= -1200 &&
+          bounds.top <= window.innerHeight + 1200;
+        if (!nearViewport) {
+          return false;
+        }
+
+        pendingGuideViewportBlocks.delete(block);
+        guideIntersectionObserver?.unobserve(block);
+        queueMaxrollGuideTranslation(block, regexTable);
+        return true;
+      }
+
+      if (!guideIntersectionObserver) {
+        guideIntersectionObserver = new IntersectionObserver(entries => {
+          entries.forEach(entry => {
+            if (!entry.isIntersecting) {
+              return;
+            }
+            pendingGuideViewportBlocks.delete(entry.target);
+            guideIntersectionObserver.unobserve(entry.target);
+            queueMaxrollGuideTranslation(entry.target, regexTable);
+          });
+        }, {
+          rootMargin: '1200px 0px'
+        });
+      }
+
+      if (!guideScrollListenerStarted) {
+        guideScrollListenerStarted = true;
+        window.addEventListener('scroll', () => {
+          if (guideScrollTimer) {
+            clearTimeout(guideScrollTimer);
+          }
+          guideScrollTimer = setTimeout(() => {
+            guideScrollTimer = null;
+            pendingGuideViewportBlocks.forEach(queueBlockIfNearViewport);
+          }, 150);
+        }, {passive: true});
+      }
+
+      collectGuideBlocks(root, false).forEach(block => {
+        if (queueBlockIfNearViewport(block)) {
+          return;
+        }
+        pendingGuideViewportBlocks.add(block);
+        guideIntersectionObserver.observe(block);
+      });
     }
 
     function replaceTextNodeRun(
@@ -458,6 +1163,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
         ) {
           return;
         }
+        if (isMaxrollGuideNode(child)) {
+          return;
+        }
         // Equipment の実アイテムTooltipでは、現在値の直後に
         // <span class="d4-color-inactive">[最小値 - 最大値]</span> が追加される。
         // これは原文データには存在しない補足表示なので、効果文の照合から外す。
@@ -527,6 +1235,10 @@ chrome.storage.sync.get(['enabled'], function(result) {
           !IGNORED_TEXT_TAGS.has(child.tagName) &&
           !child.isContentEditable
         ) {
+          if (isMaxrollGuideNode(child)) {
+            flushRun();
+            return;
+          }
           if (isSupplementaryValueElement(child)) {
             collectInlineTextNodes(child, supplementaryRangeNodes);
             return;
@@ -542,6 +1254,12 @@ chrome.storage.sync.get(['enabled'], function(result) {
     }
 
     function replaceText(node, regexTable, stats = {nodes: 0, attempts: 0, replacements: 0, chars: 0}) {
+      // Maxroll解説本文は段落単位の専用処理で扱う。
+      // 通常処理で複数spanを結合すると、色付き語句やTooltip要素の文字が
+      // 先頭Textノードへ集約されてしまうため、ここでは触らない。
+      if (isMaxrollGuideNode(node)) {
+        return stats;
+      }
       if (node.nodeType === 3) {
         replaceTextNodeRun([node], regexTable, stats);
       } else if (
@@ -670,6 +1388,10 @@ chrome.storage.sync.get(['enabled'], function(result) {
     let tooltipTranslationTimer;
 
     function observeDOM(regexTable) {
+      if (domObserverStarted) {
+        return;
+      }
+      domObserverStarted = true;
       const pendingRoots = new Set();
       const pendingTooltipRoots = new Set();
 
@@ -745,14 +1467,13 @@ chrome.storage.sync.get(['enabled'], function(result) {
             return;
           }
 
-          const roots = pendingRoots.size > DOM_CHANGE_MUTATION_THRESHOLD
-            ? [document.body]
-            : compactConnectedRoots(pendingRoots);
+          const roots = compactConnectedRoots(pendingRoots);
           pendingRoots.clear();
 
           roots.forEach(root => {
             replaceText(root, regexTable);
             replaceTitleAttributes(regexTable, undefined, root);
+            observeMaxrollGuideBlocks(root, regexTable);
           });
         }, DEBOUNCE_DOM_DELAY_MS);
       }
@@ -803,6 +1524,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
           return;
         }
         if (D4DEBUG_DISPLAY) console.log('[D4T] Loaded regexTable:', regexTable); // デバッグ用ログ
+        activeRegexTable = regexTable;
         const replaceStartTime = performance.now();
         const textStats = replaceText(document.body, regexTable);
         const replaceEndTime = performance.now();
@@ -811,6 +1533,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
         const patternsCount = regexTable.length;
         // console.log(`[D4T] Translation completed: Total ${(totalEndTime - startTime).toFixed(2)}ms, Text replacement ${(replaceEndTime - replaceStartTime).toFixed(2)}ms (${patternsCount} patterns × ${textStats.nodes} nodes = ${textStats.attempts} attempts, ${textStats.replacements} replacements, ${textStats.chars} chars), Title replacement ${(totalEndTime - replaceEndTime).toFixed(2)}ms (${titleStats.elements} elements, ${titleStats.replaced} replaced)`);
         observeDOM(regexTable);
+        observeMaxrollGuideBlocks(document, regexTable);
 
 
         if (D4DEBUG_DISPLAY) console.log('[D4T] Translations applied on page load'); // デバッグ用ログ
@@ -858,11 +1581,28 @@ chrome.storage.sync.get(['enabled'], function(result) {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.action === 'convert' && extensionEnabled) {
         if (D4DEBUG_DISPLAY) console.log('[D4T] Manual convert triggered'); // デバッグ用ログ
-        applyTranslations();
+        guideTranslationSuspended = false;
+        guideTranslatorAvailability = null;
+        if (activeRegexTable) {
+          replaceText(document.body, activeRegexTable);
+          replaceTitleAttributes(activeRegexTable);
+          observeMaxrollGuideBlocks(document, activeRegexTable);
+        } else {
+          applyTranslations();
+        }
+      } else if (
+        message.action === 'translationModelReady' &&
+        extensionEnabled &&
+        activeRegexTable
+      ) {
+        guideTranslationSuspended = false;
+        guideTranslatorAvailability = null;
+        observeMaxrollGuideBlocks(document, activeRegexTable);
       }
     });
 
   } else {
     if (D4DEBUG_DISPLAY) console.log('[D4T] Extension is disabled');
   }
-});
+  }
+);
