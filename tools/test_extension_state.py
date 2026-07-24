@@ -11,6 +11,10 @@ class ExtensionStateTests(unittest.TestCase):
     def source(self, name):
         return (SOURCES / name).read_text(encoding="utf-8")
 
+    def test_extension_version_tracks_season_14_second_release(self):
+        manifest = json.loads(self.source("manifest.json"))
+        self.assertEqual(manifest["version"], "1.14.1")
+
     def test_update_does_not_force_extension_on_or_inject_twice(self):
         background = self.source("background.js")
         self.assertIn("typeof result.enabled === 'undefined'", background)
@@ -28,6 +32,141 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("convertButton.disabled = !enabled", popup)
         self.assertIn("result.enabled !== true", popup)
         self.assertNotIn("chrome.tabs.reload", popup)
+
+    def test_popup_version_stays_in_normal_layout_flow(self):
+        popup = self.source("popup.html")
+        version_rules = re.findall(
+            r"#version\s*\{(.*?)\}",
+            popup,
+            re.DOTALL,
+        )
+        version_rule = next(
+            rule for rule in version_rules if "position:" in rule
+        )
+        self.assertIn("position: static", version_rule)
+        self.assertIn("text-align: right", version_rule)
+        self.assertNotIn("position: absolute", version_rule)
+
+    def test_maxroll_guide_translation_defaults_on_and_is_saved(self):
+        background = self.source("background.js")
+        popup = self.source("popup.js")
+        content = self.source("content.js")
+        self.assertIn(
+            "typeof result.guideTranslationEnabled === 'undefined'",
+            background,
+        )
+        self.assertIn("defaults.guideTranslationEnabled = true", background)
+        self.assertIn(
+            "guideTranslationEnabled: translationToggle.checked",
+            popup,
+        )
+        self.assertIn(
+            "result.guideTranslationEnabled !== false",
+            content,
+        )
+        self.assertIn("changes.guideTranslationEnabled", content)
+
+    def test_translator_model_download_is_user_initiated_and_monitored(self):
+        popup = self.source("popup.js")
+        self.assertIn("'Translator' in self", popup)
+        self.assertIn("Translator.availability(translatorOptions)", popup)
+        self.assertIn("const createPromise = Translator.create({", popup)
+        self.assertIn("downloadprogress", popup)
+        self.assertIn("translator.destroy()", popup)
+        self.assertLess(
+            popup.index("const createPromise = Translator.create({"),
+            popup.index("const translator = await createPromise"),
+        )
+
+    def test_offscreen_document_owns_sequential_translator(self):
+        manifest = json.loads(self.source("manifest.json"))
+        background = self.source("background.js")
+        offscreen = self.source("offscreen.js")
+        self.assertIn("offscreen", manifest["permissions"])
+        self.assertIn("chrome.offscreen.createDocument", background)
+        self.assertIn("translatorAvailability", background)
+        self.assertIn("translateText", background)
+        self.assertIn("let translatorPromise = null", offscreen)
+        self.assertIn("let translationQueue = Promise.resolve()", offscreen)
+        self.assertIn("availability !== 'available'", offscreen)
+        self.assertIn("translator.translate(text)", offscreen)
+
+    def test_translation_toggle_releases_runtime_resources(self):
+        background = self.source("background.js")
+        offscreen = self.source("offscreen.js")
+        self.assertIn("function releaseTranslationRuntime", background)
+        self.assertIn("action: 'releaseTranslator'", background)
+        self.assertIn("chrome.offscreen.closeDocument()", background)
+        self.assertIn("!isTranslationRuntimeEnabled()", background)
+        self.assertIn("Guide translation is disabled", background)
+        self.assertIn("function releaseTranslator()", offscreen)
+        self.assertIn("translator?.destroy()", offscreen)
+        self.assertIn("translatorPromise = null", offscreen)
+
+    def test_maxroll_machine_translation_uses_validated_opaque_tokens(self):
+        content = self.source("content.js")
+        self.assertIn(
+            "const GUIDE_TOKEN_PATTERN = /ZXQJ\\d{4}QJQXZ/g",
+            content,
+        )
+        self.assertIn(
+            "`ZXQJ${String(nextTokenId++).padStart(4, '0')}QJQXZ`",
+            content,
+        )
+        self.assertIn("function applyGuideDictionary", content)
+        self.assertNotIn("protectDictionaryMatches", content)
+        self.assertIn("function validateGuideTranslation", content)
+        self.assertIn(
+            "Array.from(counts.values()).every(count => count === 1)",
+            content,
+        )
+        self.assertIn("wrapperStack.pop() !== payload.node", content)
+        self.assertIn(
+            "validateGuideTranslation(response.text, record.tokens)",
+            content,
+        )
+        self.assertIn("renderGuideBlock(block, output, record.tokens)", content)
+
+    def test_maxroll_guide_skips_generic_text_rebuilder(self):
+        content = self.source("content.js")
+        self.assertIn(
+            "const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article'",
+            content,
+        )
+        self.assertIn("'main article h1'", content)
+        self.assertIn(
+            "'[class*=\"_D4PlannerPageQuote_\"]'",
+            content,
+        )
+        self.assertIn(
+            "'[class*=\"_StrAndWeak__blockListItemText_\"]'",
+            content,
+        )
+        self.assertIn(
+            "'[class*=\"_PlannerPageSection__content_\"] > div > p'",
+            content,
+        )
+        self.assertIn(
+            "'[class*=\"_ArticleAccordion__itemHeaderTitle_\"] '",
+            content,
+        )
+        self.assertIn("new IntersectionObserver", content)
+        self.assertIn("rootMargin: '1200px 0px'", content)
+        self.assertIn("pendingGuideViewportBlocks", content)
+        self.assertIn("window.addEventListener('scroll'", content)
+        self.assertIn("collectGuideBlocks(root, false)", content)
+        self.assertNotIn(
+            "pendingRoots.size > DOM_CHANGE_MUTATION_THRESHOLD",
+            content,
+        )
+        self.assertIn("GUIDE_TRANSLATION_MAX_ATTEMPTS = 2", content)
+        self.assertIn("function translateGuideTextNodesInPlace", content)
+        self.assertIn("prepareGuideTranslationInput(record.source)", content)
+        self.assertIn("if (isMaxrollGuideNode(node))", content)
+        self.assertIn("function isD4SemanticElement", content)
+        self.assertIn("function setElementTextPreservingMarkup", content)
+        self.assertIn("wrapper.node.replaceChildren(wrapper.fragment)", content)
+        self.assertNotIn("block.innerHTML =", content)
 
     def test_adjacent_text_nodes_are_translated_without_rebuilding_elements(self):
         content = self.source("content.js")
@@ -213,6 +352,8 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertEqual(translations["Kinetic Suppression"], "動的制圧")
         self.assertEqual(translations["Apprehension"], "危惧")
         self.assertEqual(translations["Fleet Wings"], "速やかなる羽")
+        self.assertEqual(translations["Shattered Vow"], "砕かれし誓い")
+        self.assertEqual(translations["Shatterd Vow"], "砕かれし誓い")
 
     def test_widows_web_full_effect_has_tag_free_translation(self):
         translations = json.loads(self.source("translations.json"))

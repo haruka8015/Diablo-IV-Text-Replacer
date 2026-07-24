@@ -5,10 +5,12 @@
   <title>Diablo4 攻略サイト日本語化ツール</title>
   <style>
     body {
-      width: 200px;
+      width: 260px;
       font-family: Arial, sans-serif;
       background-color: white; /* 常に白い背景 */
       color: black; /* 常に黒い文字 */
+      padding: 8px;
+      margin: 0;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -24,6 +26,9 @@
       }
       #version {
         color: #aaa;
+      }
+      #translatorStatus {
+        color: #bbb;
       }
     }
 
@@ -66,7 +71,17 @@
     input:checked + .slider:before {
       transform: translateX(14px);
     }
-    #convertButton {
+    h1 {
+      font-size: 18px;
+      margin: 0 0 12px;
+    }
+    .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0;
+    }
+    button {
       display: block;
       margin: 10px 0;
       background-color: #2196F3;
@@ -74,14 +89,27 @@
       border: none;
       padding: 10px;
       cursor: pointer;
+      width: 100%;
     }
-    #convertButton:hover {
+    button:hover:not(:disabled) {
       background-color: #1976D2;
     }
+    button:disabled {
+      cursor: default;
+      opacity: 0.55;
+    }
+    #translatorStatus {
+      min-height: 1.2em;
+      margin-top: 4px;
+      color: #666;
+      font-size: 12px;
+    }
     #version {
-      position: absolute;
-      bottom: 10px;
-      right: 10px;
+      position: static;
+      margin-top: 4px;
+      padding-right: 2px;
+      text-align: right;
+      line-height: 1.2;
       font-size: 10px;
       color: #888;
     }
@@ -89,11 +117,22 @@
 </head>
 <body>
 <h1>Diablo4 攻略サイト日本語化ツール</h1>
-<label class="switch">
-  <input type="checkbox" id="toggleSwitch">
-  <span class="slider"></span>
-</label>
-<span>変換機能</span>
+<div class="setting-row">
+  <label class="switch">
+    <input type="checkbox" id="toggleSwitch">
+    <span class="slider"></span>
+  </label>
+  <span>変換機能</span>
+</div>
+<div class="setting-row">
+  <label class="switch">
+    <input type="checkbox" id="translationToggle">
+    <span class="slider"></span>
+  </label>
+  <span>Maxroll解説文を翻訳</span>
+</div>
+<button id="downloadModelButton">英→日 翻訳モデルをダウンロード</button>
+<div id="translatorStatus" role="status" aria-live="polite"></div>
 <button id="convertButton">手動で変換</button>
 <div id="version"></div>
 <script src="popup.js"></script>
