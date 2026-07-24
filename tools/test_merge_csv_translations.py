@@ -40,6 +40,13 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         )
         self.assertEqual(
             merge_tool.selected_category(
+                row("ModifiedLootDescriptions", "Duriel"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "drop-sources",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
                 row("ItemType_Axe", "Name"), merge_tool.DEFAULT_CATEGORIES
             ),
             "items",
@@ -504,6 +511,38 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         for pattern, replacement in pairs:
             rendered = re.sub(pattern, replacement, rendered)
         self.assertEqual(rendered, "ユルキュー")
+
+    def test_drop_source_pairs_include_maxroll_duriel_alias(self):
+        row = lambda translation: merge_tool.CsvRow(  # noqa: E731
+            (
+                "2226815",
+                "ModifiedLootDescriptions",
+                "1",
+                "4056506661",
+                "Duriel",
+            ),
+            "ModifiedLootDescriptions",
+            "Duriel",
+            translation,
+            1,
+        )
+        pairs = merge_tool.create_drop_source_pairs(
+            row("Duriel"),
+            row("デュリエル"),
+        )
+        self.assertEqual(
+            pairs,
+            [
+                (
+                    merge_tool.DROP_SOURCE_KEY_PREFIX + "Duriel",
+                    "デュリエル",
+                ),
+                (
+                    merge_tool.DROP_SOURCE_KEY_PREFIX + "King of Maggots",
+                    "マゴット・キング",
+                ),
+            ],
+        )
 
     def test_rune_effect_keeps_s_placeholder_as_dynamic_value(self):
         english = (

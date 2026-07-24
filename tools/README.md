@@ -24,7 +24,7 @@ python tools/merge_csv_translations.py output.json \
 ```
 
 既定カテゴリは
-`attributes,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,flavors,rare-names,powers,paragon,skill-tags,skills` です。
+`attributes,drop-sources,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,flavors,rare-names,powers,paragon,skill-tags,skills` です。
 `effects` はレジェンダリー、ユニーク、ミシック効果の説明文からゲーム内の
 装飾タグを除去し、Maxroll が表示する可変数値を正規表現に変換します。
 `flavors` はユニーク、ミシック装備のフレーバーテキストを変換します。
@@ -36,6 +36,8 @@ python tools/merge_csv_translations.py output.json \
 共通ラベルを変換します。
 `weapon-tooltip` は秒間ダメージ、命中ごとのダメージ、秒間攻撃回数と速度区分を
 数値込みの行単位で変換します。
+`drop-sources` はMaxrollのTooltip下部にあるドロップ元を対象に、
+`ModifiedLootDescriptions` のボス名とMaxroll固有の別名を登録します。
 レシピ名も必要な場合は `recipes` を `--categories` に追加できます。
 `--list-categories` で内容を確認できます。既存訳を CSV で置き換える場合だけ
 `--overwrite-existing` を指定してください。

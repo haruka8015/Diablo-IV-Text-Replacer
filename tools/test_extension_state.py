@@ -162,6 +162,12 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("observeDOMTimer = null;", content)
         self.assertIn("const isConcatenatedRunePattern =", content)
         self.assertIn("isConcatenatedRunePattern ? 'g' : 'gi'", content)
+        self.assertIn("const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li'", content)
+        self.assertIn("const DROP_SOURCE_KEY_PREFIX =", content)
+        self.assertIn("function replaceDropSourceText(element, stats)", content)
+        self.assertIn("originalText.split(',').map(part =>", content)
+        self.assertIn("const bossName = part.trim()", content)
+        self.assertIn("translatedParts.join(', ')", content)
         self.assertIn("function isSupplementaryValueElement(element)", content)
         self.assertIn(
             "SUPPLEMENTARY_VALUE_MARKER_TEXT.test(element.textContent)",

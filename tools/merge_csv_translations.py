@@ -30,12 +30,14 @@ AFFIX_FIELDS = {"Name", "name", "Name_Prefix", "Name_Suffix", "AffixName"}
 PARAGON_FIELDS = {"Name", "name"}
 POWER_NAME_RE = re.compile(r"^(?:Buff|Mod)\d+_Name$")
 TOOLTIP_TEXT_CATEGORIES = {
+    "drop-sources",
     "effects",
     "flavors",
     "runes",
     "skill-tags",
     "weapon-tooltip",
 }
+DROP_SOURCE_KEY_PREFIX = "__D4T_DROP_SOURCE__:"
 COLOR_TAG_RE = re.compile(
     r"\{/?c(?:_\w+|:[0-9A-Fa-f]{6,8})?\}",
     flags=re.IGNORECASE,
@@ -135,6 +137,14 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                 "attributes",
                 "AttributeDescriptions の装備・能力値表記",
                 lambda row: row.file_name == "AttributeDescriptions",
+            ),
+        ),
+        (
+            "drop-sources",
+            Rule(
+                "drop-sources",
+                "MaxrollのTooltipに表示されるドロップ元ボス名",
+                lambda row: row.file_name == "ModifiedLootDescriptions",
             ),
         ),
         (
@@ -591,6 +601,27 @@ def create_rune_tooltip_pairs(
     return pairs
 
 
+def create_drop_source_pairs(
+    en_row: CsvRow, ja_row: CsvRow
+) -> list[tuple[str, str]]:
+    """カンマ区切りで照合するドロップ元ボス名辞書を作る。"""
+    english = clean_color_tags(en_row.translation)
+    japanese = clean_color_tags(ja_row.translation)
+    if not english or not japanese:
+        return []
+
+    pairs = [(DROP_SOURCE_KEY_PREFIX + english, japanese)]
+    if english == "Duriel":
+        # Maxroll固有表記「Duriel, King of Maggots」の後半用。
+        pairs.append(
+            (
+                DROP_SOURCE_KEY_PREFIX + "King of Maggots",
+                "マゴット・キング",
+            )
+        )
+    return pairs
+
+
 def create_flavor_description_pairs(
     english: str, japanese: str
 ) -> list[tuple[str, str]]:
@@ -826,7 +857,9 @@ def merge_csv_files(
             rejection = None
         elif category in TOOLTIP_TEXT_CATEGORIES:
             effect_pairs = (
-                create_weapon_tooltip_pairs(en_row, ja_row)
+                create_drop_source_pairs(en_row, ja_row)
+                if category == "drop-sources"
+                else create_weapon_tooltip_pairs(en_row, ja_row)
                 if category == "weapon-tooltip"
                 else create_rune_tooltip_pairs(en_row, ja_row)
                 if category == "runes"

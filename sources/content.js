@@ -21,6 +21,8 @@ const SUPPLEMENTARY_VALUE_MARKER_TEXT =
   /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
 const LONG_TEXT_TOOLTIP_SELECTOR =
   '.d4t-GameTooltip, .d4t-SkillTagTooltip';
+const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li';
+const DROP_SOURCE_KEY_PREFIX = '__D4T_DROP_SOURCE__:';
 
 // popup で状態が変わったら、開いているすべての対象タブへ即時反映する。
 // OFF時はリロードによって既に変換済みのDOMも元の表示へ戻す。
@@ -45,6 +47,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
     if (D4DEBUG_DISPLAY) console.log('[D4T] Content script loaded'); // デバッグ用ログ
 
     let translationTable = {};
+    let dropSourceTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
 
@@ -76,7 +79,19 @@ chrome.storage.sync.get(['enabled'], function(result) {
             return response.json();
           })
           .then(data => {
-            translationTable = data;
+            translationTable = {};
+            dropSourceTranslations = new Map();
+            Object.entries(data).forEach(([pattern, replacement]) => {
+              if (pattern.startsWith(DROP_SOURCE_KEY_PREFIX)) {
+                const bossName = pattern.slice(DROP_SOURCE_KEY_PREFIX.length);
+                dropSourceTranslations.set(
+                  bossName.toLocaleLowerCase('en-US'),
+                  replacement
+                );
+                return;
+              }
+              translationTable[pattern] = replacement;
+            });
 
             // 事前コンパイルされた正規表現パターンの配列を初期化
             compiledPatterns = [];
@@ -119,7 +134,8 @@ chrome.storage.sync.get(['enabled'], function(result) {
             if (D4DEBUG_DISPLAY) {
               console.log('[D4T] Loaded translation table:', {
                 patterns: compiledPatterns.length,
-                tooltipPatterns: compiledWholeSentencePatterns.length
+                tooltipPatterns: compiledWholeSentencePatterns.length,
+                dropSources: dropSourceTranslations.size
               });
             }
             
@@ -533,6 +549,12 @@ chrome.storage.sync.get(['enabled'], function(result) {
         !IGNORED_TEXT_TAGS.has(node.tagName) &&
         !node.isContentEditable
       ) {
+        if (
+          node.matches(DROP_SOURCE_ITEM_SELECTOR) &&
+          replaceDropSourceText(node, stats)
+        ) {
+          return stats;
+        }
         // Maxroll の効果文は数値や強調語ごとに span へ分割される。
         // ブロック境界を含まない要素では子孫テキストを一続きの文章として照合し、
         // 要素を作り直さず既存 Text ノードだけを書き換える。
@@ -582,6 +604,41 @@ chrome.storage.sync.get(['enabled'], function(result) {
         }
       }
       return stats;
+    }
+
+    function replaceDropSourceText(element, stats) {
+      // Maxrollは複数のドロップ元をカンマ区切りで1つの<li>に描画する。
+      // 組み合わせ全文を列挙せず、各ボス名をtrimして個別に辞書照合する。
+      if (
+        element.children.length > 0 ||
+        element.childNodes.length !== 1 ||
+        element.firstChild.nodeType !== 3
+      ) {
+        return false;
+      }
+      const textNode = element.firstChild;
+      const originalText = textNode.nodeValue;
+      let replacementCount = 0;
+      const translatedParts = originalText.split(',').map(part => {
+        const bossName = part.trim();
+        const translated = dropSourceTranslations.get(
+          bossName.toLocaleLowerCase('en-US')
+        );
+        if (translated) {
+          replacementCount++;
+          return translated;
+        }
+        return bossName;
+      });
+      if (!replacementCount) {
+        return false;
+      }
+
+      textNode.nodeValue = translatedParts.join(', ');
+      stats.nodes++;
+      stats.chars += originalText.length;
+      stats.replacements += replacementCount;
+      return true;
     }
 
     function replaceTitleAttributes(regexTable, stats = {elements: 0, replaced: 0}, root = document) {
