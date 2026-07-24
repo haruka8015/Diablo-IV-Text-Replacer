@@ -9,6 +9,19 @@ const DOM_CHANGE_MUTATION_THRESHOLD = 50;
 
 let extensionEnabled = false;
 
+const BLOCK_BOUNDARY_TAGS = new Set([
+  'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'BR', 'DIV', 'DL', 'DT', 'DD',
+  'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM', 'H1', 'H2', 'H3',
+  'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV', 'OL', 'P', 'PRE',
+  'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH', 'THEAD', 'TR', 'UL'
+]);
+const IGNORED_TEXT_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT']);
+const DYNAMIC_VALUE_TEXT = /^\s*(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%x|x%|%|x|\+)?)\s*$/;
+const SUPPLEMENTARY_VALUE_MARKER_TEXT =
+  /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
+const LONG_TEXT_TOOLTIP_SELECTOR =
+  '.d4t-GameTooltip, .d4t-SkillTagTooltip';
+
 // popup で状態が変わったら、開いているすべての対象タブへ即時反映する。
 // OFF時はリロードによって既に変換済みのDOMも元の表示へ戻す。
 chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -32,7 +45,16 @@ chrome.storage.sync.get(['enabled'], function(result) {
     if (D4DEBUG_DISPLAY) console.log('[D4T] Content script loaded'); // デバッグ用ログ
 
     let translationTable = {};
-    let compiledPatterns = null;    // 事前コンパイルされた正規表現パターンの配列
+    let compiledPatterns = null;    // 通常の短い正規表現パターン
+    let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
+
+    function createTranslationRegex(pattern) {
+      // Maxroll側のタイポグラフィ変換でASCIIの'が’になる場合も照合する。
+      const escapedPattern = pattern.replace(/['’]/g, "['’]");
+      const leadingBoundary = /^[A-Za-z0-9_]/.test(pattern) ? '\\b' : '';
+      const trailingBoundary = /[A-Za-z0-9_]$/.test(pattern) ? '\\b' : '';
+      return new RegExp(`${leadingBoundary}${escapedPattern}${trailingBoundary}`, 'gi');
+    }
 
     function loadTranslations() {
       if (D4DEBUG_DISPLAY) console.log('[D4T] Loading translations...'); // デバッグ用ログ
@@ -49,6 +71,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
 
             // 事前コンパイルされた正規表現パターンの配列を初期化
             compiledPatterns = [];
+            compiledWholeSentencePatterns = [];
 
             // キーの長さが長い順に並び替える（長いフレーズを優先的に処理）
             const sortedKeys = Object.keys(translationTable).sort((a, b) => b.length - a.length);
@@ -56,18 +79,33 @@ chrome.storage.sync.get(['enabled'], function(result) {
             // すべてのパターンを事前にコンパイル
             sortedKeys.forEach(pattern => {
               const replacement = translationTable[pattern];
-              const escapedPattern = pattern.replace(/['']/g, "['']");
               
-              compiledPatterns.push({
-                regex: new RegExp(`\\b${escapedPattern}\\b`, 'gi'),
+              const wholeSentence =
+                pattern.includes('\\s+') &&
+                (
+                  pattern.includes('\\.') ||
+                  pattern.includes(':') ||
+                  pattern.length >= 80
+                );
+              const compiledPattern = {
+                regex: createTranslationRegex(pattern),
                 replacement,
-                minLength: pattern.length  // パターン自体の長さ
-              });
+                wholeSentence,
+                // 正規表現キーの文字数は実際の表示文字数より長くなるため、
+                // 長さによる除外を行わない。
+                minLength: /[\\()[\]{}+*?|]/.test(pattern) ? 0 : pattern.length
+              };
+              if (wholeSentence) {
+                compiledWholeSentencePatterns.push(compiledPattern);
+              } else {
+                compiledPatterns.push(compiledPattern);
+              }
             });
             
             if (D4DEBUG_DISPLAY) {
               console.log('[D4T] Loaded translation table:', {
-                patterns: compiledPatterns.length
+                patterns: compiledPatterns.length,
+                tooltipPatterns: compiledWholeSentencePatterns.length
               });
             }
             
@@ -75,8 +113,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
             const regexTable = [];
             sortedKeys.forEach(pattern => {
               const replacement = translationTable[pattern];
-              const escapedPattern = pattern.replace(/['']/g, "['']");
-              regexTable.push([new RegExp(escapedPattern, 'gi'), replacement]);
+              regexTable.push([createTranslationRegex(pattern), replacement]);
             });
             
             return regexTable;
@@ -84,39 +121,69 @@ chrome.storage.sync.get(['enabled'], function(result) {
     }
 
     // 最適化された変換処理関数
-    function applyOptimizedTransformations(text, stats = null) {
+    function applyCompiledPatternList(text, patterns, stats, matchInfo) {
       const textLength = text.length;
-      
-      // 事前コンパイルされたパターンを適用（長さフィルタ付き）
-      for (let {regex, replacement, minLength} of compiledPatterns) {
+
+      for (let {regex, replacement, minLength, wholeSentence} of patterns) {
         if (minLength <= textLength) {
           if (stats) stats.attempts++;
           const newText = text.replace(regex, replacement);
           if (newText !== text) {
             text = newText;
             if (stats) stats.replacements++;
+            if (matchInfo && wholeSentence) {
+              matchInfo.wholeSentence = true;
+            }
           }
         }
       }
-      
+
       return text;
     }
 
+    function applyOptimizedTransformations(
+      text,
+      stats = null,
+      matchInfo = null,
+      allowWholeSentence = false
+    ) {
+      // 長文リストはTooltip内だけで走査し、通常ページの置換コストから完全に外す。
+      if (allowWholeSentence) {
+        text = applyCompiledPatternList(
+          text,
+          compiledWholeSentencePatterns,
+          stats,
+          matchInfo
+        );
+      }
+      return applyCompiledPatternList(text, compiledPatterns, stats, matchInfo);
+    }
+
     // 共通の変換処理関数（後方互換性のため残す）
-    function applyRegexTransformations(text, regexTable, stats = null) {
+    function applyRegexTransformations(
+      text,
+      regexTable,
+      stats = null,
+      matchInfo = null,
+      allowWholeSentence = false
+    ) {
       if (D4DEBUG_DISPLAY) console.log('[D4T] Original text:', text); // デバッグ用ログ
       
       // 新しい最適化実装が利用可能な場合はそちらを使用
       if (compiledPatterns) {
-        return applyOptimizedTransformations(text, stats);
+        return applyOptimizedTransformations(
+          text,
+          stats,
+          matchInfo,
+          allowWholeSentence
+        );
       }
       
       // 従来の実装
       for (let [regex, replacement] of regexTable) {
         if (D4DEBUG_DISPLAY) console.log('[D4T] Applying regex:', regex); // デバッグ用ログ
-        const wordBoundaryRegex = new RegExp(`\\b${regex.source}\\b`, regex.flags);
         if (stats) stats.attempts++;
-        const newText = text.replace(wordBoundaryRegex, replacement);
+        const newText = text.replace(regex, replacement);
         if (stats && newText !== text) {
           stats.replacements++;
         }
@@ -125,28 +192,240 @@ chrome.storage.sync.get(['enabled'], function(result) {
       return text;
     }
 
-    function replaceTextNodeRun(textNodes, regexTable, stats) {
+    function replaceTextNodeRun(
+      textNodes,
+      regexTable,
+      stats,
+      supplementaryRangeNodes = [],
+      containerNode = null
+    ) {
       const originalText = textNodes.map(textNode => textNode.nodeValue).join('');
       stats.nodes += textNodes.length;
       stats.chars += originalText.length;
 
-      const newText = applyRegexTransformations(originalText, regexTable, stats);
+      const tooltipContainer =
+        containerNode?.nodeType === 1
+          ? containerNode.closest(LONG_TEXT_TOOLTIP_SELECTOR)
+          : textNodes[0]?.parentElement?.closest(LONG_TEXT_TOOLTIP_SELECTOR);
+      const matchInfo = {wholeSentence: false};
+      const newText = applyRegexTransformations(
+        originalText,
+        regexTable,
+        stats,
+        matchInfo,
+        Boolean(tooltipContainer)
+      );
       if (newText === originalText) {
-        return;
+        return false;
       }
 
       if (D4DEBUG_DISPLAY) {
         console.log('[D4T] Text changed from:', originalText, 'to:', newText);
       }
 
-      // Reactなどが保持しているノード自体は削除せず、連続テキストの先頭へ結果を格納する。
-      // 残りを空文字にすることで、要素構造を変えずにノード境界をまたぐ語句を変換できる。
+      // Tooltip全文では、装飾spanと可変数値を既存位置に残して文章を配分する。
+      const isTooltipSentence =
+        matchInfo.wholeSentence &&
+        Boolean(tooltipContainer);
+      const anchors = [];
+      let requiredAnchorCount = 0;
+      let searchPosition = 0;
+
+      function isStyledTextNode(textNode) {
+        let element = textNode.parentElement;
+        while (element && element !== containerNode) {
+          if (
+            element.classList.contains('d4-style-u') ||
+            element.classList.contains('d4-color-important')
+          ) {
+            return true;
+          }
+          element = element.parentElement;
+        }
+        return false;
+      }
+
+      textNodes.forEach((textNode, nodeIndex) => {
+        const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT);
+        let value = dynamicMatch?.[1] || null;
+
+        if (!value && isTooltipSentence && isStyledTextNode(textNode)) {
+          value = applyRegexTransformations(
+            textNode.nodeValue,
+            regexTable
+          ).trim();
+        }
+
+        if (!value) {
+          return;
+        }
+        requiredAnchorCount++;
+        const valuePosition = newText.indexOf(value, searchPosition);
+        if (valuePosition < 0) {
+          return;
+        }
+        anchors.push({nodeIndex, value, valuePosition});
+        searchPosition = valuePosition + value.length;
+      });
+
+      function writeSegment(startIndex, endIndex, value) {
+        if (startIndex >= endIndex) {
+          return value.length === 0;
+        }
+        for (let index = startIndex; index < endIndex; index++) {
+          const replacement = index === startIndex ? value : '';
+          if (textNodes[index].nodeValue !== replacement) {
+            textNodes[index].nodeValue = replacement;
+          }
+        }
+        return true;
+      }
+
+      // Maxroll が色分けした可変数値の Text ノードはその場に残し、
+      // 数値間の文章だけを既存ノードへ格納する。
+      let nodePosition = 0;
+      let textPosition = 0;
+      const canKeepAnchors =
+        anchors.length > 0 &&
+        anchors.length === requiredAnchorCount &&
+        anchors.every(anchor => {
+          const segment = newText.slice(textPosition, anchor.valuePosition);
+          const hasRoom = segment.length === 0 || anchor.nodeIndex > nodePosition;
+          nodePosition = anchor.nodeIndex + 1;
+          textPosition = anchor.valuePosition + anchor.value.length;
+          return hasRoom;
+        }) &&
+        (
+          newText.slice(textPosition).length === 0 ||
+          nodePosition < textNodes.length
+        );
+
+      if (canKeepAnchors) {
+        nodePosition = 0;
+        textPosition = 0;
+        anchors.forEach(anchor => {
+          writeSegment(
+            nodePosition,
+            anchor.nodeIndex,
+            newText.slice(textPosition, anchor.valuePosition)
+          );
+          textNodes[anchor.nodeIndex].nodeValue = anchor.value;
+          nodePosition = anchor.nodeIndex + 1;
+          textPosition = anchor.valuePosition + anchor.value.length;
+        });
+        writeSegment(nodePosition, textNodes.length, newText.slice(textPosition));
+        return true;
+      }
+
+      if (isTooltipSentence && requiredAnchorCount > 0) {
+        return false;
+      }
+
+      // 通常テキストは従来どおり、先頭ノードへ変換結果を格納する。
       textNodes.forEach((textNode, index) => {
-        const replacement = index === 0 ? newText : '';
-        if (textNode.nodeValue !== replacement) {
-          textNode.nodeValue = replacement;
+        textNode.nodeValue = index === 0 ? newText : '';
+      });
+      return true;
+    }
+
+    function collectInlineTextNodes(
+      node,
+      textNodes,
+      supplementaryRangeNodes = []
+    ) {
+      node.childNodes.forEach(child => {
+        if (child.nodeType === 3) {
+          textNodes.push(child);
+          return;
+        }
+        if (
+          child.nodeType !== 1 ||
+          IGNORED_TEXT_TAGS.has(child.tagName) ||
+          child.isContentEditable
+        ) {
+          return;
+        }
+        // Equipment の実アイテムTooltipでは、現在値の直後に
+        // <span class="d4-color-inactive">[最小値 - 最大値]</span> が追加される。
+        // これは原文データには存在しない補足表示なので、効果文の照合から外す。
+        // span 自体はDOMに残るため、Maxrollの色・配置・数値表示は維持される。
+        if (
+          child.classList.contains('d4-color-inactive') &&
+          (
+            DYNAMIC_VALUE_TEXT.test(child.textContent) ||
+            SUPPLEMENTARY_VALUE_MARKER_TEXT.test(child.textContent)
+          )
+        ) {
+          collectInlineTextNodes(child, supplementaryRangeNodes);
+          return;
+        }
+        collectInlineTextNodes(child, textNodes, supplementaryRangeNodes);
+      });
+    }
+
+    function hasBlockBoundaryChild(node) {
+      return Array.from(node.children).some(child =>
+        BLOCK_BOUNDARY_TAGS.has(child.tagName)
+      );
+    }
+
+    function replaceInlineRunsBetweenBlockBoundaries(
+      node,
+      regexTable,
+      stats
+    ) {
+      let textNodes = [];
+      let supplementaryRangeNodes = [];
+
+      function flushRun() {
+        if (textNodes.length) {
+          replaceTextNodeRun(
+            textNodes,
+            regexTable,
+            stats,
+            supplementaryRangeNodes,
+            node
+          );
+        }
+        textNodes = [];
+        supplementaryRangeNodes = [];
+      }
+
+      node.childNodes.forEach(child => {
+        if (
+          child.nodeType === 1 &&
+          BLOCK_BOUNDARY_TAGS.has(child.tagName)
+        ) {
+          flushRun();
+          return;
+        }
+        if (child.nodeType === 3) {
+          textNodes.push(child);
+          return;
+        }
+        if (
+          child.nodeType === 1 &&
+          !IGNORED_TEXT_TAGS.has(child.tagName) &&
+          !child.isContentEditable
+        ) {
+          if (
+            child.classList.contains('d4-color-inactive') &&
+            (
+              DYNAMIC_VALUE_TEXT.test(child.textContent) ||
+              SUPPLEMENTARY_VALUE_MARKER_TEXT.test(child.textContent)
+            )
+          ) {
+            collectInlineTextNodes(child, supplementaryRangeNodes);
+            return;
+          }
+          collectInlineTextNodes(
+            child,
+            textNodes,
+            supplementaryRangeNodes
+          );
         }
       });
+      flushRun();
     }
 
     function replaceText(node, regexTable, stats = {nodes: 0, attempts: 0, replacements: 0, chars: 0}) {
@@ -154,9 +433,39 @@ chrome.storage.sync.get(['enabled'], function(result) {
         replaceTextNodeRun([node], regexTable, stats);
       } else if (
         node.nodeType === 1 &&
-        !['SCRIPT', 'STYLE', 'TEXTAREA'].includes(node.tagName) &&
+        !IGNORED_TEXT_TAGS.has(node.tagName) &&
         !node.isContentEditable
       ) {
+        // Maxroll の効果文は数値や強調語ごとに span へ分割される。
+        // ブロック境界を含まない要素では子孫テキストを一続きの文章として照合し、
+        // 要素を作り直さず既存 Text ノードだけを書き換える。
+        const hasBlockBoundary = hasBlockBoundaryChild(node);
+        if (!hasBlockBoundary) {
+          const inlineTextNodes = [];
+          const supplementaryRangeNodes = [];
+          collectInlineTextNodes(
+            node,
+            inlineTextNodes,
+            supplementaryRangeNodes
+          );
+          if (inlineTextNodes.length > 1) {
+            const replaced = replaceTextNodeRun(
+              inlineTextNodes,
+              regexTable,
+              stats,
+              supplementaryRangeNodes,
+              node
+            );
+            if (replaced) {
+              return stats;
+            }
+          }
+        } else {
+          // MaxrollはCSV内の改行を、同じ効果<li>内の<br>として描画する。
+          // <br>間を1行として結合し、行内の装飾spanをまたいで照合する。
+          replaceInlineRunsBetweenBlockBoundaries(node, regexTable, stats);
+        }
+
         const childNodes = Array.from(node.childNodes);
 
         for (let index = 0; index < childNodes.length;) {
@@ -178,8 +487,14 @@ chrome.storage.sync.get(['enabled'], function(result) {
       return stats;
     }
 
-    function replaceTitleAttributes(regexTable, stats = {elements: 0, replaced: 0}) {
-      const elements = document.querySelectorAll('[title]');
+    function replaceTitleAttributes(regexTable, stats = {elements: 0, replaced: 0}, root = document) {
+      const elements = [];
+      if (root.nodeType === 1 && root.hasAttribute('title')) {
+        elements.push(root);
+      }
+      if (typeof root.querySelectorAll === 'function') {
+        elements.push(...root.querySelectorAll('[title]'));
+      }
       stats.elements = elements.length;
       elements.forEach(el => {
         const originalTitle = el.getAttribute('title');
@@ -190,7 +505,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
             console.log('[D4T] Title changed from:', originalTitle, 'to:', newTitle); // デバッグ用ログ
           }
         }
-        el.setAttribute('title', newTitle);
+        if (newTitle !== originalTitle) {
+          el.setAttribute('title', newTitle);
+        }
       });
       return stats;
     }
@@ -198,6 +515,40 @@ chrome.storage.sync.get(['enabled'], function(result) {
     let observeDOMTimer;
 
     function observeDOM(regexTable) {
+      const pendingRoots = new Set();
+
+      function scheduleTranslation(root) {
+        if (!root || !root.isConnected) {
+          return;
+        }
+        pendingRoots.add(root.nodeType === 3 ? root.parentElement : root);
+
+        if (observeDOMTimer) clearTimeout(observeDOMTimer);
+        observeDOMTimer = setTimeout(() => {
+          if (!extensionEnabled) {
+            pendingRoots.clear();
+            return;
+          }
+
+          const roots = pendingRoots.size > DOM_CHANGE_MUTATION_THRESHOLD
+            ? [document.body]
+            : Array.from(pendingRoots).filter(candidate =>
+                candidate && candidate.isConnected &&
+                !Array.from(pendingRoots).some(other =>
+                  other !== candidate &&
+                  other.nodeType === 1 &&
+                  other.contains(candidate)
+                )
+              );
+          pendingRoots.clear();
+
+          roots.forEach(root => {
+            replaceText(root, regexTable);
+            replaceTitleAttributes(regexTable, undefined, root);
+          });
+        }, DEBOUNCE_DOM_DELAY_MS);
+      }
+
       const observer = new MutationObserver(mutations => {
         if (!extensionEnabled) {
           return;
@@ -206,43 +557,30 @@ chrome.storage.sync.get(['enabled'], function(result) {
           console.log(`[D4T] Number of mutations observed: ${mutations.length}`);
         }
 
-        if (mutations.length > DOM_CHANGE_MUTATION_THRESHOLD) {
-          // すでにタイマーが設定されている場合はクリア
-          if (observeDOMTimer) clearTimeout(observeDOMTimer);
-
-          // mutationsが閾値を超えた場合はデバウンスで遅延させて全体をまとめて処理
-          observeDOMTimer = setTimeout(() => {
-            // console.log(`[D4T] Batch translation triggered by ${mutations.length} mutations`);
-            if (D4DEBUG_DISPLAY) {
-              console.log('[D4T] Performing full-page translation due to high mutation count.');
-            }
-            const batchStartTime = performance.now();
-            const textStats = replaceText(document.body, regexTable);
-            const replaceEndTime = performance.now();
-            const titleStats = replaceTitleAttributes(regexTable);
-            const batchEndTime = performance.now();
-            const patternsCount = regexTable.length;
-            // console.log(`[D4T] Batch translation completed: Total ${(batchEndTime - batchStartTime).toFixed(2)}ms, Text replacement ${(replaceEndTime - batchStartTime).toFixed(2)}ms (${patternsCount} patterns × ${textStats.nodes} nodes = ${textStats.attempts} attempts, ${textStats.replacements} replacements, ${textStats.chars} chars), Title replacement ${(batchEndTime - replaceEndTime).toFixed(2)}ms (${titleStats.elements} elements, ${titleStats.replaced} replaced)`);
-          }, DEBOUNCE_DOM_DELAY_MS);
-        } else {
-          // mutationsが閾値以下の場合は、逐次処理
-          mutations.forEach(mutation => {
+        mutations.forEach(mutation => {
+          if (mutation.type === 'childList') {
             mutation.addedNodes.forEach(node => {
-              replaceText(node, regexTable);
-              if (node.nodeType === 1 && node.hasAttribute('title')) {
-                let title = node.getAttribute('title');
-                let newTitle = applyRegexTransformations(title, regexTable);
-                if (newTitle !== title && D4DEBUG_DISPLAY) {
-                  console.log('[D4T] Title changed from:', title, 'to:', newTitle); // デバッグ用ログ
-                }
-                node.setAttribute('title', newTitle);
-              }
+              scheduleTranslation(node);
             });
-          });
-        }
+          } else if (mutation.type === 'characterData') {
+            // React はタブ切替時に要素を追加せず、既存 Text ノードだけを
+            // 英語へ書き戻すことがある。親要素から再評価して分割文も連結する。
+            scheduleTranslation(mutation.target.parentElement);
+          } else if (mutation.type === 'attributes') {
+            // 非表示の Equipment / Stat Priority パネルが表示された場合や、
+            // tooltip の title が後から設定された場合も対象にする。
+            scheduleTranslation(mutation.target);
+          }
+        });
       });
 
-      observer.observe(document.body, { childList: true, subtree: true });
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['hidden', 'class', 'aria-selected', 'data-state', 'title']
+      });
       if (D4DEBUG_DISPLAY) console.log('[D4T] MutationObserver started'); // デバッグ用ログ
     }
 

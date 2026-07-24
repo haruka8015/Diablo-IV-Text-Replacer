@@ -29,6 +29,7 @@ NAME_FIELDS = {"Name", "name", "AffixName"}
 AFFIX_FIELDS = {"Name", "name", "Name_Prefix", "Name_Suffix", "AffixName"}
 PARAGON_FIELDS = {"Name", "name"}
 POWER_NAME_RE = re.compile(r"^(?:Buff|Mod)\d+_Name$")
+TOOLTIP_TEXT_CATEGORIES = {"effects", "flavors", "skill-tags"}
 COLOR_TAG_RE = re.compile(
     r"\{/?c(?:_\w+|:[0-9A-Fa-f]{6,8})?\}",
     flags=re.IGNORECASE,
@@ -39,9 +40,20 @@ TEMPLATE_TOKEN_RE = re.compile(
     flags=re.IGNORECASE,
 )
 PLACEHOLDER_RE = re.compile(r"\{(?:VALUE[^}]*|s\d+)\}", flags=re.IGNORECASE)
+D4_VALUE_TOKEN_RE = re.compile(r"\[[^\[\]\r\n]+\]")
+D4_FORMAT_TAG_RE = re.compile(r"\{[^{}\r\n]*\}")
+FLAVOR_ATTRIBUTION_RE = re.compile(
+    r"^(?P<body>.+[.!?])(?P<spacing>\s+)(?P<attribution>-\s*.+)$",
+    flags=re.DOTALL,
+)
 REGEX_META_RE = re.compile(r"([\\^$.*+?()[\]{}|/])")
 REGEX_SPECIAL_RE = re.compile(r"[\\()|[\]{}+*?^$.]")
 NUMBER_CAPTURE = r"([+-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?%?|\.\d+%?)"
+D4_VALUE_CAPTURE = (
+    r"(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?"
+    r"(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?"
+    r"\]?(?:%x|x%|%|x|\+)?)"
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +150,33 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             ),
         ),
         (
+            "effects",
+            Rule(
+                "effects",
+                "レジェンダリー、ユニーク、ミシック効果の説明文",
+                lambda row: row.key == "Desc"
+                and row.file_name.startswith("Affix_")
+                and (
+                    "_Unique_" in row.file_name
+                    or "legendary" in row.file_name.lower()
+                    or "mythic" in row.file_name.lower()
+                ),
+            ),
+        ),
+        (
+            "flavors",
+            Rule(
+                "flavors",
+                "ユニーク、ミシック装備のフレーバーテキスト",
+                lambda row: row.key == "Flavor"
+                and row.file_name.startswith("Item_")
+                and (
+                    "_Unique" in row.file_name
+                    or "_Mythic" in row.file_name
+                ),
+            ),
+        ),
+        (
             "rare-names",
             Rule(
                 "rare-names",
@@ -167,13 +206,21 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             ),
         ),
         (
+            "skill-tags",
+            Rule(
+                "skill-tags",
+                "SkillTags のタグ名と注釈本文",
+                lambda row: row.file_name == "SkillTags",
+            ),
+        ),
+        (
             "skills",
             Rule(
                 "skills",
                 "スキル名とスキルタグ名",
                 lambda row: (
                     row.file_name.startswith("Skill_")
-                    or row.file_name in {"SkillTags", "SkillTagNames"}
+                    or row.file_name == "SkillTagNames"
                 ),
             ),
         ),
@@ -194,6 +241,7 @@ DEFAULT_CATEGORIES = tuple(name for name in RULES if name != "recipes")
 def load_csv(path: Path) -> tuple[dict[tuple[str, ...], CsvRow], int]:
     rows: dict[tuple[str, ...], CsvRow] = {}
     duplicate_count = 0
+    previous_identity: tuple[str, ...] | None = None
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         missing = [name for name in CSV_REQUIRED_COLUMNS if name not in (reader.fieldnames or [])]
@@ -201,6 +249,27 @@ def load_csv(path: Path) -> tuple[dict[tuple[str, ...], CsvRow], int]:
             raise ValueError(f"{path}: 必須列がありません: {', '.join(missing)}")
 
         for line_number, raw in enumerate(reader, start=2):
+            if not any(raw.get(column) for column in CSV_REQUIRED_COLUMNS):
+                continue
+
+            # Blizzard CSVでは複数段落のDescが、次行の第1列だけへ格納される。
+            # 直前の正規行へ連結しないと、Loyalty's Mantle等の箇条書きが失われる。
+            if (
+                previous_identity is not None
+                and raw["SNO"]
+                and all(not raw[column] for column in CSV_ID_COLUMNS[1:])
+                and not raw["Translation"]
+            ):
+                previous = rows[previous_identity]
+                rows[previous_identity] = CsvRow(
+                    identity=previous.identity,
+                    file_name=previous.file_name,
+                    key=previous.key,
+                    translation=f"{previous.translation}\n{raw['SNO']}",
+                    line_number=previous.line_number,
+                )
+                continue
+
             identity = tuple(raw[column] for column in CSV_ID_COLUMNS)
             row = CsvRow(
                 identity=identity,
@@ -217,6 +286,7 @@ def load_csv(path: Path) -> tuple[dict[tuple[str, ...], CsvRow], int]:
                     )
                 continue
             rows[identity] = row
+            previous_identity = identity
     return rows, duplicate_count
 
 
@@ -244,6 +314,15 @@ def clean_color_tags(value: str) -> str:
 
 def _escape_regex_literal(value: str) -> str:
     return REGEX_META_RE.sub(r"\\\1", value)
+
+
+def _escape_regex_text(value: str) -> str:
+    """DOM 側の改行・空白差を許容するリテラル正規表現を作る。"""
+    return "".join(
+        r"\s+" if part.isspace() else _escape_regex_literal(part)
+        for part in re.split(r"(\s+)", value)
+        if part
+    )
 
 
 def _token_id(token: str) -> str | None:
@@ -301,6 +380,104 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
     ):
         return None
     return pattern, replacement
+
+
+def _d4_value_token_id(token: str) -> str:
+    return re.sub(r"\s+", "", token.replace('""', '"')).lower()
+
+
+def create_d4_description_pair(
+    english: str, japanese: str
+) -> tuple[str, str] | None:
+    """Maxroll が描画する装備効果文向けの全文正規表現を生成する。
+
+    Blizzard の色・条件タグは DOM には現れないため除去し、角括弧内の
+    Affix 式は Maxroll 上の実数値（範囲表記を含む）を受けるキャプチャにする。
+    """
+    english = D4_FORMAT_TAG_RE.sub("", english).strip()
+    japanese = D4_FORMAT_TAG_RE.sub("", japanese).strip()
+    if not english or not japanese or "{" in english + japanese or "}" in english + japanese:
+        return None
+
+    english_tokens = list(D4_VALUE_TOKEN_RE.finditer(english))
+    if not english_tokens:
+        if english == japanese:
+            return None
+        pattern = _escape_regex_text(english)
+        try:
+            re.compile(pattern)
+        except re.error:
+            return None
+        return pattern, japanese
+
+    capture_by_token: dict[str, int] = {}
+    pattern_parts: list[str] = []
+    position = 0
+    for capture_number, match in enumerate(english_tokens, start=1):
+        pattern_parts.append(_escape_regex_text(english[position : match.start()]))
+        capture_by_token.setdefault(_d4_value_token_id(match.group(0)), capture_number)
+        pattern_parts.append(D4_VALUE_CAPTURE)
+        position = match.end()
+    pattern_parts.append(_escape_regex_text(english[position:]))
+
+    replacement_parts: list[str] = []
+    position = 0
+    for match in D4_VALUE_TOKEN_RE.finditer(japanese):
+        replacement_parts.append(japanese[position : match.start()])
+        capture = capture_by_token.get(_d4_value_token_id(match.group(0)))
+        if capture is None:
+            return None
+        replacement_parts.append(f"${capture}")
+        position = match.end()
+    replacement_parts.append(japanese[position:])
+
+    pattern = "".join(pattern_parts)
+    replacement = "".join(replacement_parts)
+    if "{" in replacement or "}" in replacement:
+        return None
+    try:
+        re.compile(pattern)
+    except re.error:
+        return None
+    return pattern, replacement
+
+
+def create_d4_description_pairs(
+    english: str, japanese: str
+) -> list[tuple[str, str]]:
+    """全文に加え、Maxrollが別ブロックへ描画する改行単位の規則も作る。"""
+    pairs: list[tuple[str, str]] = []
+    full_pair = create_d4_description_pair(english, japanese)
+    if full_pair:
+        pairs.append(full_pair)
+
+    english_lines = [line.strip() for line in english.splitlines() if line.strip()]
+    japanese_lines = [line.strip() for line in japanese.splitlines() if line.strip()]
+    if len(english_lines) > 1 and len(english_lines) == len(japanese_lines):
+        for english_line, japanese_line in zip(english_lines, japanese_lines):
+            line_pair = create_d4_description_pair(english_line, japanese_line)
+            if line_pair and line_pair not in pairs:
+                pairs.append(line_pair)
+    return pairs
+
+
+def create_flavor_description_pairs(
+    english: str, japanese: str
+) -> list[tuple[str, str]]:
+    """CSV版に加え、Maxrollが本文だけを引用符で囲む表示にも対応する。"""
+    pairs = create_d4_description_pairs(english, japanese)
+    clean_english = D4_FORMAT_TAG_RE.sub("", english).strip()
+    attribution = FLAVOR_ATTRIBUTION_RE.match(clean_english)
+    if attribution:
+        maxroll_english = (
+            f'"{attribution.group("body")}"'
+            f'{attribution.group("spacing")}'
+            f'{attribution.group("attribution")}'
+        )
+        maxroll_pair = create_d4_description_pair(maxroll_english, japanese)
+        if maxroll_pair and maxroll_pair not in pairs:
+            pairs.append(maxroll_pair)
+    return pairs
 
 
 def make_translation_pair(english: str, japanese: str) -> tuple[str, str, str | None]:
@@ -416,7 +593,7 @@ def merge_csv_files(
         if ja_row is None:
             ja_row = (
                 ja_fallback_rows.get(fallback_identity(en_row))
-                if category == "paragon"
+                if category in {"paragon", "flavors"}
                 else None
             )
             if ja_row is None:
@@ -424,16 +601,33 @@ def merge_csv_files(
                 continue
             stats["matched-ja-fallback"] += 1
 
-        key, value, rejection = make_translation_pair(
-            en_row.translation, ja_row.translation
-        )
+        if category in TOOLTIP_TEXT_CATEGORIES:
+            effect_pairs = (
+                create_flavor_description_pairs(
+                    en_row.translation, ja_row.translation
+                )
+                if category == "flavors"
+                else create_d4_description_pairs(
+                    en_row.translation, ja_row.translation
+                )
+            )
+            if not effect_pairs:
+                stats["rejected:unsupported-effect"] += 1
+                continue
+            pairs = effect_pairs
+            rejection = None
+        else:
+            key, value, rejection = make_translation_pair(
+                en_row.translation, ja_row.translation
+            )
         if rejection:
             stats[f"rejected:{rejection}"] += 1
             continue
 
-        pairs = [(key, value)]
-        if category == "affixes" and _is_legendary_affix_file(en_row.file_name):
-            pairs.extend(make_affix_alias_pairs(key, value))
+        if category not in TOOLTIP_TEXT_CATEGORIES:
+            pairs = [(key, value)]
+            if category == "affixes" and _is_legendary_affix_file(en_row.file_name):
+                pairs.extend(make_affix_alias_pairs(key, value))
 
         for candidate_key, candidate_value in pairs:
             if candidate_key in conflicts:
@@ -441,6 +635,11 @@ def merge_csv_files(
                 continue
             previous = candidates.get(candidate_key)
             if previous and previous[0] != candidate_value:
+                # 同じ英語効果に通常版・旧シーズン版・チャーム版で訳語差が
+                # ある場合、先に現れる現行の基本版を採用する。
+                if category in TOOLTIP_TEXT_CATEGORIES:
+                    stats["effect-conflict-kept-first"] += 1
+                    continue
                 del candidates[candidate_key]
                 conflicts.add(candidate_key)
                 stats["conflict-key"] += 1

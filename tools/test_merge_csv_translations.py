@@ -1,5 +1,6 @@
 import csv
 import importlib.util
+import re
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,24 @@ SPEC.loader.exec_module(merge_tool)
 
 
 class MergeCsvTranslationsTests(unittest.TestCase):
+    def test_load_csv_joins_blizzard_continuation_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sample.csv"
+            path.write_text(
+                "SNO,FileName,Index,KeyHash,Key,Translation\n"
+                "1,Affix_Helm_Unique_Test,0,2,Desc,Intro:\n"
+                '"{icon:bullet,1.2} First bonus.",,,,,\n'
+                ",,,,,\n"
+                '"{icon:bullet,1.2} Second bonus.",,,,,\n',
+                encoding="utf-8",
+            )
+            rows, _ = merge_tool.load_csv(path)
+        self.assertEqual(
+            rows[("1", "Affix_Helm_Unique_Test", "0", "2", "Desc")].translation,
+            "Intro:\n{icon:bullet,1.2} First bonus.\n"
+            "{icon:bullet,1.2} Second bonus.",
+        )
+
     def test_category_rules_cover_requested_content(self):
         row = lambda file_name, key: merge_tool.CsvRow(  # noqa: E731
             ("1", file_name, "0", "2", key), file_name, key, "value", 2
@@ -47,6 +66,34 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         )
         self.assertEqual(
             merge_tool.selected_category(
+                row("Affix_Amulet_Unique_Spiritborn_103", "Desc"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "effects",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("Affix_legendary_spiritborn_test", "Desc"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "effects",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("Affix_X2_Transfiguration_Mythic_Shako", "Desc"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "effects",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("Item_Ring_Unique_Spiritborn_002", "Flavor"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "flavors",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
                 row("ParagonGlyph_001", "Name"), merge_tool.DEFAULT_CATEGORIES
             ),
             "paragon",
@@ -56,7 +103,14 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 row("SkillTags", "Skill_Spirit_Forest_TagName"),
                 merge_tool.DEFAULT_CATEGORIES,
             ),
-            "skills",
+            "skill-tags",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("SkillTags", "Keyword_PestilentSwarm_Description"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "skill-tags",
         )
         self.assertEqual(
             merge_tool.selected_category(
@@ -153,6 +207,171 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 ("Kinetic Suppression", "動的制圧"),
                 ("Aspect of Kinetic Suppression", "動的制圧の化身"),
             ],
+        )
+
+    def test_d4_effect_description_matches_maxroll_without_game_tags(self):
+        english = (
+            "{if:SF.IsMythic}{c_mythic}{/if}Your Critical Strikes cause your "
+            "Poisoning on an enemy to burst, dealing "
+            "{if:SF.IsMythic}{c_number}{else}{c_random}{/if}"
+            "[Affix_Value_1|%|]{/c} of the total Poisoning instantly to them "
+            'and {c_number}[Affix."Static Value 0"|%|]{/c} of the burst to '
+            "surrounding enemies before removing the Poisoning effect from "
+            "the primary target.{if:SF.IsMythic}{/c_mythic}{/if}"
+        )
+        japanese = (
+            "{if:SF.IsMythic}{c_mythic}{/if}クリティカルヒットが敵に与えた"
+            "中毒効果を炸裂させ、即座に合計中毒ダメージの"
+            "{if:SF.IsMythic}{c_number}{else}{c_random}{/if}"
+            "[Affix_Value_1|%|]{/c}を標的に与えると同時に、この炸裂の"
+            '{c_number}[Affix."Static Value 0"|%|]{/c}のダメージを周囲の敵に'
+            "与え、メインの標的から中毒効果を除去する。"
+            "{if:SF.IsMythic}{/c_mythic}{/if}"
+        )
+
+        pair = merge_tool.create_d4_description_pair(english, japanese)
+        self.assertIsNotNone(pair)
+        pattern, replacement = pair
+        maxroll_text = (
+            "Your Critical Strikes cause your Poisoning on an enemy to burst, "
+            "dealing [167 - 200]% of the total Poisoning instantly to them and "
+            "10% of the burst to surrounding enemies before removing the "
+            "Poisoning effect from the primary target."
+        )
+        self.assertRegex(maxroll_text, pattern)
+        self.assertEqual(
+            replacement,
+            "クリティカルヒットが敵に与えた中毒効果を炸裂させ、即座に合計"
+            "中毒ダメージの$1を標的に与えると同時に、この炸裂の$2のダメージ"
+            "を周囲の敵に与え、メインの標的から中毒効果を除去する。",
+        )
+        self.assertNotIn("{", replacement)
+        self.assertNotIn("}", replacement)
+
+    def test_d4_static_mythic_effect_is_also_translated(self):
+        pair = merge_tool.create_d4_description_pair(
+            "{c_mythic}Enemies afflicted by more Damage over Time than "
+            "remaining Life are Executed.{/c}",
+            "{c_mythic}残りのライフを上回る継続ダメージを受けた敵を処刑する。{/c}",
+        )
+        self.assertEqual(
+            pair,
+            (
+                r"Enemies\s+afflicted\s+by\s+more\s+Damage\s+over\s+Time"
+                r"\s+than\s+remaining\s+Life\s+are\s+Executed\.",
+                "残りのライフを上回る継続ダメージを受けた敵を処刑する。",
+            ),
+        )
+
+    def test_multiline_effect_also_generates_rules_for_rendered_blocks(self):
+        pairs = merge_tool.create_d4_description_pairs(
+            "While choices match:\n"
+            "{icon:bullet,1.2} Their bonuses are "
+            '{c_number}[Affix.""Static Value 0""|%|]{/c} more potent.',
+            "選択が同じ間:\n"
+            "{icon:bullet,1.2}それらのボーナスの効力が"
+            '{c_number}[Affix.""Static Value 0""|%|]{/c}上昇する。',
+        )
+        self.assertEqual(len(pairs), 3)
+        self.assertIn(("While\\s+choices\\s+match:", "選択が同じ間:"), pairs)
+        bullet_pattern, bullet_replacement = pairs[2]
+        self.assertRegex("Their bonuses are 30% more potent.", bullet_pattern)
+        self.assertEqual(
+            bullet_replacement, "それらのボーナスの効力が$1上昇する。"
+        )
+
+    def test_flavor_uses_fallback_identity_and_strips_format_tags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            en_path = directory / "en.csv"
+            ja_path = directory / "ja.csv"
+            en_path.write_text(
+                "SNO,FileName,Index,KeyHash,Key,Translation\n"
+                "1,Item_Ring_Unique_Test,2,3,Flavor,"
+                "{c_flavor}An old tale.{/c}\n",
+                encoding="utf-8",
+            )
+            ja_path.write_text(
+                "SNO,FileName,Index,KeyHash,Key,Translation\n"
+                "1,Item_Ring_Unique_Test,1,3,Flavor,"
+                "{c_flavor}古い物語。{/c}\n",
+                encoding="utf-8",
+            )
+            merged, report = merge_tool.merge_csv_files(
+                en_path, ja_path, {}, categories=("flavors",)
+            )
+
+        self.assertEqual(merged[r"An\s+old\s+tale\."], "古い物語。")
+        self.assertEqual(report["counts"]["matched-ja-fallback"], 1)
+
+    def test_flavor_generates_maxroll_quoted_body_variant(self):
+        pairs = merge_tool.create_flavor_description_pairs(
+            "One touch is all it took. She looked into my eyes. -Jios, "
+            "Sarat's Servant",
+            "「一度触れれば十分だった。彼女は私の目を見つめた」"
+            "―サラットの従僕、ジオス",
+        )
+
+        maxroll_text = (
+            '"One touch is all it took. She looked into my eyes." -Jios, '
+            "Sarat's Servant"
+        )
+        matching = [
+            replacement
+            for pattern, replacement in pairs
+            if re.fullmatch(pattern, maxroll_text)
+        ]
+        self.assertEqual(
+            matching,
+            ["「一度触れれば十分だった。彼女は私の目を見つめた」"
+             "―サラットの従僕、ジオス"],
+        )
+
+    def test_skill_tag_description_strips_formatting_and_preserves_values(self):
+        pair = merge_tool.create_d4_description_pair(
+            "{c_important}{b}{u}Resolve{/u}{/b}{/c} increases your Armor by "
+            "[25|+%|] while active.",
+            "{c_important}{b}{u}決意{/u}{/b}{/c}の発動中、荘厳度が"
+            "[25|+%|]増加する。",
+        )
+        self.assertIsNotNone(pair)
+        pattern, replacement = pair
+        self.assertRegex("Resolve increases your Armor by 25% while active.", pattern)
+        self.assertEqual(replacement, "決意の発動中、荘厳度が$1増加する。")
+        self.assertNotIn("{", replacement)
+        self.assertNotIn("}", replacement)
+
+    def test_effect_wording_conflict_keeps_first_game_variant(self):
+        rows = (
+            "SNO,FileName,Index,KeyHash,Key,Translation\n"
+            "1,Affix_Helm_Unique_Current,0,2,Desc,Skills gain power.\n"
+            "2,Affix_Helm_Unique_Charm,0,3,Desc,Skills gain power.\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            en_path = directory / "en.csv"
+            ja_path = directory / "ja.csv"
+            en_path.write_text(rows, encoding="utf-8")
+            ja_path.write_text(
+                rows.replace(
+                    "Skills gain power.",
+                    "スキルが力を得る。",
+                    1,
+                ).replace(
+                    "Skills gain power.",
+                    "スキルの力が増す。",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            merged, report = merge_tool.merge_csv_files(
+                en_path, ja_path, {}, categories=("effects",)
+            )
+        self.assertEqual(
+            merged[r"Skills\s+gain\s+power\."], "スキルが力を得る。"
+        )
+        self.assertEqual(
+            report["counts"]["effect-conflict-kept-first"], 1
         )
 
     def test_paragon_node_color_tags_are_removed(self):

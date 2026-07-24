@@ -23,8 +23,14 @@ python tools/merge_csv_translations.py output.json \
   --categories items,affixes,paragon
 ```
 
-既定カテゴリは `attributes,items,affixes,rare-names,powers,paragon,skills`
-です。レシピ名も必要な場合は `recipes` を `--categories` に追加できます。
+既定カテゴリは
+`attributes,items,affixes,effects,flavors,rare-names,powers,paragon,skill-tags,skills` です。
+`effects` はレジェンダリー、ユニーク、ミシック効果の説明文からゲーム内の
+装飾タグを除去し、Maxroll が表示する可変数値を正規表現に変換します。
+`flavors` はユニーク、ミシック装備のフレーバーテキストを変換します。
+`skill-tags` は `SkillTags` のタグ名と注釈本文を変換します。長い注釈ルールは
+装備Tooltip内だけで照合されます。
+レシピ名も必要な場合は `recipes` を `--categories` に追加できます。
 `--list-categories` で内容を確認できます。既存訳を CSV で置き換える場合だけ
 `--overwrite-existing` を指定してください。
 
