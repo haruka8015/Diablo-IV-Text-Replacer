@@ -84,6 +84,9 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn(
             "if (isTooltipSentence && requiredAnchorCount > 0)", content
         )
+        self.assertIn("const orderedAnchors = [...anchors].sort(", content)
+        self.assertIn("fragment.appendChild(anchorRoots[index])", content)
+        self.assertIn("containerNode.replaceChildren(fragment)", content)
         self.assertNotIn("textNode === outputNode ? newText : ''", content)
 
     def test_long_effect_rules_are_limited_to_game_tooltips(self):
@@ -113,6 +116,17 @@ class ExtensionStateTests(unittest.TestCase):
             content,
         )
         self.assertIn("Boolean(tooltipContainer)", content)
+
+    def test_specific_parameter_patterns_sort_before_generic_templates(self):
+        content = self.source("content.js")
+        self.assertIn("const wildcardCount = pattern =>", content)
+        self.assertIn(
+            "const wildcardDifference = wildcardCount(a) - wildcardCount(b)",
+            content,
+        )
+        self.assertIn(
+            "return wildcardDifference || b.length - a.length", content
+        )
 
     def test_straight_and_curly_apostrophes_both_match(self):
         content = self.source("content.js")

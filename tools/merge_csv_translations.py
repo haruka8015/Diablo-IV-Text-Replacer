@@ -29,7 +29,13 @@ NAME_FIELDS = {"Name", "name", "AffixName"}
 AFFIX_FIELDS = {"Name", "name", "Name_Prefix", "Name_Suffix", "AffixName"}
 PARAGON_FIELDS = {"Name", "name"}
 POWER_NAME_RE = re.compile(r"^(?:Buff|Mod)\d+_Name$")
-TOOLTIP_TEXT_CATEGORIES = {"effects", "flavors", "skill-tags"}
+TOOLTIP_TEXT_CATEGORIES = {
+    "effects",
+    "flavors",
+    "runes",
+    "skill-tags",
+    "weapon-tooltip",
+}
 COLOR_TAG_RE = re.compile(
     r"\{/?c(?:_\w+|:[0-9A-Fa-f]{6,8})?\}",
     flags=re.IGNORECASE,
@@ -129,6 +135,50 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                 "attributes",
                 "AttributeDescriptions の装備・能力値表記",
                 lambda row: row.file_name == "AttributeDescriptions",
+            ),
+        ),
+        (
+            "weapon-tooltip",
+            Rule(
+                "weapon-tooltip",
+                "武器Tooltipの秒間ダメージ、命中ダメージ、秒間攻撃回数",
+                lambda row: (
+                    row.file_name == "H2OLayout"
+                    and row.key
+                    in {
+                        "TooltipRatingLabelDPS",
+                        "TooltipRatingLabelAttackSpeed",
+                        "TooltipRatingLabelDamagePerHit",
+                        "TooltipRatingLabelDamagePerHitHeader",
+                    }
+                )
+                or (
+                    row.file_name == "UIToolTips"
+                    and row.key.startswith("WeaponSpeed_")
+                ),
+            ),
+        ),
+        (
+            "tooltip-labels",
+            Rule(
+                "tooltip-labels",
+                "装備Tooltipのアイテムパワー、品質、アイテム品質ラベル",
+                lambda row: (
+                    (row.file_name, row.key)
+                    in {
+                        ("Hero", "ItemPower"),
+                        ("GameOptions", "HeaderQuality"),
+                    }
+                    or row.file_name == "ItemQuality"
+                ),
+            ),
+        ),
+        (
+            "runes",
+            Rule(
+                "runes",
+                "ルーン名、ルーンワード名、条件・効果・オーバーフロー説明",
+                lambda row: row.file_name.startswith("Item_Rune_"),
             ),
         ),
         (
@@ -342,20 +392,28 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
     capture_number = 0
 
     for match in english_tokens:
-        pattern_parts.append(_escape_regex_literal(english[position : match.start()]))
+        literal_before = english[position : match.start()]
+        pattern_parts.append(_escape_regex_text(literal_before))
         token = match.group(0)
         token_id = _token_id(token)
         if token_id is None:
             return None
         capture_number += 1
         capture_by_token.setdefault(token_id, capture_number)
-        if token.startswith("[") or token_id.endswith("%}"):
+        if (
+            token.startswith("[")
+            or token_id.endswith("%}")
+            or literal_before.rstrip().endswith(("+", "-"))
+        ):
             pattern_parts.append(NUMBER_CAPTURE)
         else:
-            pattern_parts.append(r"(.*?)")
+            text_capture = r"(.*?)"
+            if match.end() == len(english):
+                text_capture += r"(?=\s*(?:\(|\[|$))"
+            pattern_parts.append(text_capture)
         position = match.end()
 
-    pattern_parts.append(_escape_regex_literal(english[position:]))
+    pattern_parts.append(_escape_regex_text(english[position:]))
     pattern = "".join(pattern_parts)
 
     replacement_parts: list[str] = []
@@ -480,6 +538,87 @@ def create_flavor_description_pairs(
     return pairs
 
 
+def create_weapon_tooltip_pairs(
+    en_row: CsvRow, ja_row: CsvRow
+) -> list[tuple[str, str]]:
+    """Maxrollの武器評価行を数値込みの日本語語順で生成する。"""
+    english = D4_FORMAT_TAG_RE.sub("", en_row.translation).strip()
+    japanese = D4_FORMAT_TAG_RE.sub("", ja_row.translation).strip()
+
+    if en_row.key == "TooltipRatingLabelDPS":
+        return [
+            (
+                rf"{D4_VALUE_CAPTURE}\s+{_escape_regex_text(english)}",
+                f"$1 {japanese}",
+            )
+        ]
+
+    if en_row.key == "TooltipRatingLabelDamagePerHit":
+        english_label = TEMPLATE_TOKEN_RE.sub("", english).strip()
+        japanese_label = TEMPLATE_TOKEN_RE.sub("", japanese).strip()
+        return [
+            (
+                rf"{D4_VALUE_CAPTURE}\s+{_escape_regex_text(english_label)}",
+                f"{japanese_label}$1",
+            )
+        ]
+
+    if en_row.key == "TooltipRatingLabelAttackSpeed":
+        english_label = TEMPLATE_TOKEN_RE.sub("", english).strip()
+        japanese_label = TEMPLATE_TOKEN_RE.sub("", japanese).strip()
+        return [
+            (
+                rf"{D4_VALUE_CAPTURE}\s+{_escape_regex_text(english_label)}"
+                r"\s+(\([^)]*\))",
+                f"{japanese_label}$1 $2",
+            )
+        ]
+
+    return create_d4_description_pairs(en_row.translation, ja_row.translation)
+
+
+def create_attribute_tooltip_pairs(
+    en_row: CsvRow, ja_row: CsvRow
+) -> list[tuple[str, str]] | None:
+    """Maxrollの描画時に展開されるAttributeDescriptionsの制御記法を処理する。"""
+    if en_row.key != "Evade_Reduce_Cooldown_On_Attack":
+        return None
+
+    english = D4_FORMAT_TAG_RE.sub("", en_row.translation).strip()
+    japanese = D4_FORMAT_TAG_RE.sub("", ja_row.translation).strip()
+    english_value = D4_VALUE_TOKEN_RE.search(english)
+    japanese_value = D4_VALUE_TOKEN_RE.search(japanese)
+    if not english_value or not japanese_value:
+        return []
+
+    english_prefix = english[: english_value.start()]
+    english_suffix = english[english_value.end() :].strip()
+    plural = re.fullmatch(r"\|4([^:;]+):([^;]+);", english_suffix)
+    if not plural:
+        return []
+
+    japanese_replacement = (
+        japanese[: japanese_value.start()]
+        + "$1"
+        + japanese[japanese_value.end() :]
+    )
+    plural_forms = sorted(
+        (plural.group(1), plural.group(2)),
+        key=len,
+        reverse=True,
+    )
+    pattern = (
+        _escape_regex_text(english_prefix)
+        + D4_VALUE_CAPTURE
+        + r"\s+(?:"
+        + _escape_regex_text(plural_forms[0])
+        + "|"
+        + _escape_regex_text(plural_forms[1])
+        + ")"
+    )
+    return [(pattern, japanese_replacement)]
+
+
 def make_translation_pair(english: str, japanese: str) -> tuple[str, str, str | None]:
     """戻り値は (英語キー, 日本語値, 除外理由)。"""
     english = clean_color_tags(english)
@@ -495,6 +634,7 @@ def make_translation_pair(english: str, japanese: str) -> tuple[str, str, str | 
         return "", "", "same-language"
 
     template_pair = create_template_pair(english, japanese)
+    is_generated_template = template_pair is not None
     if template_pair:
         english, japanese = template_pair
     elif "{" in english or "}" in english or "{" in japanese or "}" in japanese:
@@ -502,7 +642,7 @@ def make_translation_pair(english: str, japanese: str) -> tuple[str, str, str | 
 
     if len(english) >= 200:
         return "", "", "too-long"
-    if len(REGEX_SPECIAL_RE.findall(english)) > 14:
+    if not is_generated_template and len(REGEX_SPECIAL_RE.findall(english)) > 14:
         return "", "", "complex-regex"
     try:
         re.compile(english)
@@ -593,7 +733,7 @@ def merge_csv_files(
         if ja_row is None:
             ja_row = (
                 ja_fallback_rows.get(fallback_identity(en_row))
-                if category in {"paragon", "flavors"}
+                if category in {"paragon", "flavors", "runes"}
                 else None
             )
             if ja_row is None:
@@ -601,9 +741,22 @@ def merge_csv_files(
                 continue
             stats["matched-ja-fallback"] += 1
 
-        if category in TOOLTIP_TEXT_CATEGORIES:
+        attribute_pairs = (
+            create_attribute_tooltip_pairs(en_row, ja_row)
+            if category == "attributes"
+            else None
+        )
+        if attribute_pairs is not None:
+            if not attribute_pairs:
+                stats["rejected:unsupported-attribute"] += 1
+                continue
+            pairs = attribute_pairs
+            rejection = None
+        elif category in TOOLTIP_TEXT_CATEGORIES:
             effect_pairs = (
-                create_flavor_description_pairs(
+                create_weapon_tooltip_pairs(en_row, ja_row)
+                if category == "weapon-tooltip"
+                else create_flavor_description_pairs(
                     en_row.translation, ja_row.translation
                 )
                 if category == "flavors"
@@ -624,7 +777,10 @@ def merge_csv_files(
             stats[f"rejected:{rejection}"] += 1
             continue
 
-        if category not in TOOLTIP_TEXT_CATEGORIES:
+        if (
+            category not in TOOLTIP_TEXT_CATEGORIES
+            and attribute_pairs is None
+        ):
             pairs = [(key, value)]
             if category == "affixes" and _is_legendary_affix_file(en_row.file_name):
                 pairs.extend(make_affix_alias_pairs(key, value))

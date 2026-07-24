@@ -74,7 +74,12 @@ chrome.storage.sync.get(['enabled'], function(result) {
             compiledWholeSentencePatterns = [];
 
             // キーの長さが長い順に並び替える（長いフレーズを優先的に処理）
-            const sortedKeys = Object.keys(translationTable).sort((a, b) => b.length - a.length);
+            const wildcardCount = pattern =>
+              (pattern.match(/\(\.\*\?\)/g) || []).length;
+            const sortedKeys = Object.keys(translationTable).sort((a, b) => {
+              const wildcardDifference = wildcardCount(a) - wildcardCount(b);
+              return wildcardDifference || b.length - a.length;
+            });
 
             // すべてのパターンを事前にコンパイル
             sortedKeys.forEach(pattern => {
@@ -229,7 +234,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
         Boolean(tooltipContainer);
       const anchors = [];
       let requiredAnchorCount = 0;
-      let searchPosition = 0;
+      const occupiedAnchorRanges = [];
 
       function isStyledTextNode(textNode) {
         let element = textNode.parentElement;
@@ -260,12 +265,24 @@ chrome.storage.sync.get(['enabled'], function(result) {
           return;
         }
         requiredAnchorCount++;
-        const valuePosition = newText.indexOf(value, searchPosition);
+        let valuePosition = newText.indexOf(value);
+        while (
+          valuePosition >= 0 &&
+          occupiedAnchorRanges.some(range =>
+            valuePosition < range.end &&
+            valuePosition + value.length > range.start
+          )
+        ) {
+          valuePosition = newText.indexOf(value, valuePosition + 1);
+        }
         if (valuePosition < 0) {
           return;
         }
         anchors.push({nodeIndex, value, valuePosition});
-        searchPosition = valuePosition + value.length;
+        occupiedAnchorRanges.push({
+          start: valuePosition,
+          end: valuePosition + value.length
+        });
       });
 
       function writeSegment(startIndex, endIndex, value) {
@@ -289,6 +306,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
         anchors.length > 0 &&
         anchors.length === requiredAnchorCount &&
         anchors.every(anchor => {
+          if (anchor.valuePosition < textPosition) {
+            return false;
+          }
           const segment = newText.slice(textPosition, anchor.valuePosition);
           const hasRoom = segment.length === 0 || anchor.nodeIndex > nodePosition;
           nodePosition = anchor.nodeIndex + 1;
@@ -315,6 +335,72 @@ chrome.storage.sync.get(['enabled'], function(result) {
         });
         writeSegment(nodePosition, textNodes.length, newText.slice(textPosition));
         return true;
+      }
+
+      // 日本語化で「数値→項目名」が「項目名→数値」になる場合は、
+      // Maxrollの既存spanをそのまま移動して色・下線を維持する。
+      if (
+        isTooltipSentence &&
+        containerNode?.nodeType === 1 &&
+        anchors.length > 0 &&
+        anchors.length === requiredAnchorCount
+      ) {
+        function topLevelChild(textNode) {
+          let child = textNode;
+          while (child.parentNode && child.parentNode !== containerNode) {
+            child = child.parentNode;
+          }
+          return child.parentNode === containerNode ? child : null;
+        }
+
+        const orderedAnchors = [...anchors].sort(
+          (left, right) => left.valuePosition - right.valuePosition
+        );
+        const anchorRoots = orderedAnchors.map(anchor =>
+          topLevelChild(textNodes[anchor.nodeIndex])
+        );
+        const supplementaryRoots = supplementaryRangeNodes
+          .map(topLevelChild)
+          .filter((root, index, roots) =>
+            root && roots.indexOf(root) === index
+          );
+        const movableRoots = new Set([...anchorRoots, ...supplementaryRoots]);
+        const canReorder =
+          anchorRoots.every(Boolean) &&
+          new Set(anchorRoots).size === anchorRoots.length &&
+          Array.from(containerNode.childNodes).every(child =>
+            child.nodeType === 3 ||
+            movableRoots.has(child) ||
+            (child.nodeType === 1 && child.textContent.trim() === '')
+          );
+
+        if (canReorder) {
+          const emptyElements = Array.from(containerNode.children).filter(
+            child => child.textContent.trim() === '' && !movableRoots.has(child)
+          );
+          const fragment = document.createDocumentFragment();
+          emptyElements.forEach(element => fragment.appendChild(element));
+          let outputPosition = 0;
+          orderedAnchors.forEach((anchor, index) => {
+            const segment = newText.slice(
+              outputPosition,
+              anchor.valuePosition
+            );
+            if (segment) {
+              fragment.appendChild(document.createTextNode(segment));
+            }
+            textNodes[anchor.nodeIndex].nodeValue = anchor.value;
+            fragment.appendChild(anchorRoots[index]);
+            outputPosition = anchor.valuePosition + anchor.value.length;
+          });
+          const trailingText = newText.slice(outputPosition);
+          if (trailingText) {
+            fragment.appendChild(document.createTextNode(trailingText));
+          }
+          supplementaryRoots.forEach(root => fragment.appendChild(root));
+          containerNode.replaceChildren(fragment);
+          return true;
+        }
       }
 
       if (isTooltipSentence && requiredAnchorCount > 0) {

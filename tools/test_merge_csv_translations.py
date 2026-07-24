@@ -94,6 +94,41 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         )
         self.assertEqual(
             merge_tool.selected_category(
+                row("Item_Rune_Effect_Spiritborn_Vortex", "RuneDescription"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "runes",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("Hero", "ItemPower"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "tooltip-labels",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("ItemQuality", "Legendary"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "tooltip-labels",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("H2OLayout", "TooltipRatingLabelDPS"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "weapon-tooltip",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("UIToolTips", "WeaponSpeed_Slow1"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "weapon-tooltip",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
                 row("ParagonGlyph_001", "Name"), merge_tool.DEFAULT_CATEGORIES
             ),
             "paragon",
@@ -186,6 +221,29 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         pattern, replacement = pair
         self.assertRegex("+25% Fire Damage", pattern)
         self.assertEqual(replacement, "$2ダメージ+$1")
+
+    def test_attribute_template_uses_numeric_capture_and_flexible_whitespace(self):
+        key, value, rejection = merge_tool.make_translation_pair(
+            "+[{VALUE}] Maximum Life",
+            "ライフ最大値+[{VALUE}]",
+        )
+        self.assertIsNone(rejection)
+        self.assertRegex("+1,813 Maximum Life", key)
+        self.assertRegex("+1,813\nMaximum Life", key)
+        self.assertEqual(value, "ライフ最大値+$1")
+
+        key, value, rejection = merge_tool.make_translation_pair(
+            "+{VALUE2} to {c_important}{VALUE1}{/c}",
+            "{c_important}{VALUE1}{/c}+{VALUE2}",
+        )
+        self.assertIsNone(rejection)
+        match = re.search(
+            key,
+            "+5 to Counterattack (Spiritborn Only) [4 - 5]",
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(2), "Counterattack")
+        self.assertEqual(value, "$2+$1")
 
     def test_corrupt_japanese_is_rejected(self):
         _, _, reason = merge_tool.make_translation_pair("Axe", "�")
@@ -304,6 +362,33 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertEqual(merged[r"An\s+old\s+tale\."], "古い物語。")
         self.assertEqual(report["counts"]["matched-ja-fallback"], 1)
 
+    def test_rune_uses_fallback_identity_when_language_indexes_differ(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            en_path = directory / "en.csv"
+            ja_path = directory / "ja.csv"
+            en_path.write_text(
+                "SNO,FileName,Index,KeyHash,Key,Translation\n"
+                "1,Item_Rune_Effect_Test,2,10,RuneOverflowBehavior,"
+                "Up to 100% Increased Size\n",
+                encoding="utf-8",
+            )
+            ja_path.write_text(
+                "SNO,FileName,Index,KeyHash,Key,Translation\n"
+                "1,Item_Rune_Effect_Test,3,10,RuneOverflowBehavior,"
+                "範囲が最大100%拡大\n",
+                encoding="utf-8",
+            )
+            merged, report = merge_tool.merge_csv_files(
+                en_path, ja_path, {}, categories=("runes",)
+            )
+
+        self.assertEqual(
+            merged[r"Up\s+to\s+100%\s+Increased\s+Size"],
+            "範囲が最大100%拡大",
+        )
+        self.assertEqual(report["counts"]["matched-ja-fallback"], 1)
+
     def test_flavor_generates_maxroll_quoted_body_variant(self):
         pairs = merge_tool.create_flavor_description_pairs(
             "One touch is all it took. She looked into my eyes. -Jios, "
@@ -340,6 +425,130 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertEqual(replacement, "決意の発動中、荘厳度が$1増加する。")
         self.assertNotIn("{", replacement)
         self.assertNotIn("}", replacement)
+
+    def test_weapon_tooltip_rows_include_values_in_japanese_order(self):
+        def csv_row(key, translation):
+            return merge_tool.CsvRow(
+                ("1", "H2OLayout", "1", "2", key),
+                "H2OLayout",
+                key,
+                translation,
+                2,
+            )
+
+        samples = (
+            (
+                "TooltipRatingLabelDPS",
+                "Damage Per Second",
+                "毎秒ダメージ",
+                "4,146 Damage Per Second",
+                "$1 毎秒ダメージ",
+            ),
+            (
+                "TooltipRatingLabelDamagePerHit",
+                "{s1} Damage per Hit",
+                "命中ごとのダメージ{s1}",
+                "[3,839 - 5,375] Damage per Hit",
+                "命中ごとのダメージ$1",
+            ),
+            (
+                "TooltipRatingLabelAttackSpeed",
+                "{s1} Attacks per Second {s2}",
+                "秒間攻撃回数{s1} {s2}",
+                "0.90 Attacks per Second (Slow)",
+                "秒間攻撃回数$1 $2",
+            ),
+        )
+        for key, english, japanese, rendered, expected in samples:
+            with self.subTest(key=key):
+                pairs = merge_tool.create_weapon_tooltip_pairs(
+                    csv_row(key, english),
+                    csv_row(key, japanese),
+                )
+                self.assertEqual(len(pairs), 1)
+                pattern, replacement = pairs[0]
+                self.assertRegex(rendered, pattern)
+                self.assertEqual(replacement, expected)
+
+    def test_evade_cooldown_attribute_expands_plural_control_text(self):
+        def csv_row(translation):
+            return merge_tool.CsvRow(
+                (
+                    "4080",
+                    "AttributeDescriptions",
+                    "229",
+                    "3688852659",
+                    "Evade_Reduce_Cooldown_On_Attack",
+                ),
+                "AttributeDescriptions",
+                "Evade_Reduce_Cooldown_On_Attack",
+                translation,
+                1,
+            )
+
+        pairs = merge_tool.create_attribute_tooltip_pairs(
+            csv_row(
+                "Attacks Reduce Evade's Cooldown by "
+                "[{VALUE}|1|] |4Second:Seconds;"
+            ),
+            csv_row(
+                "攻撃すると回避のクールダウンが[{VALUE}|1|]秒減少"
+            ),
+        )
+        self.assertIsNotNone(pairs)
+        self.assertEqual(len(pairs), 1)
+        pattern, replacement = pairs[0]
+        self.assertRegex(
+            "Attacks Reduce Evade's Cooldown by 1.9 Seconds",
+            pattern,
+        )
+        self.assertRegex(
+            "Attacks Reduce Evade's Cooldown by 1 Second",
+            pattern,
+        )
+        self.assertEqual(
+            replacement,
+            "攻撃すると回避のクールダウンが$1秒減少",
+        )
+
+    def test_evade_cooldown_attribute_pair_is_kept_during_merge(self):
+        header = "SNO,FileName,Index,KeyHash,Key,Translation\n"
+        english = (
+            "4080,AttributeDescriptions,229,3688852659,"
+            "Evade_Reduce_Cooldown_On_Attack,"
+            "Attacks Reduce Evade's Cooldown by "
+            "[{VALUE}|1|] |4Second:Seconds;\n"
+        )
+        japanese = (
+            "4080,AttributeDescriptions,229,3688852659,"
+            "Evade_Reduce_Cooldown_On_Attack,"
+            "攻撃すると回避のクールダウンが[{VALUE}|1|]秒減少\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            en_path = directory / "en.csv"
+            ja_path = directory / "ja.csv"
+            en_path.write_text(header + english, encoding="utf-8")
+            ja_path.write_text(header + japanese, encoding="utf-8")
+            merged, _ = merge_tool.merge_csv_files(
+                en_path,
+                ja_path,
+                {},
+                categories=("attributes",),
+            )
+
+        matching = [
+            replacement
+            for pattern, replacement in merged.items()
+            if re.search(
+                pattern,
+                "Attacks Reduce Evade's Cooldown by 1.9 Seconds",
+            )
+        ]
+        self.assertEqual(
+            matching,
+            ["攻撃すると回避のクールダウンが$1秒減少"],
+        )
 
     def test_effect_wording_conflict_keeps_first_game_variant(self):
         rows = (

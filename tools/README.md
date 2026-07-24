@@ -24,12 +24,18 @@ python tools/merge_csv_translations.py output.json \
 ```
 
 既定カテゴリは
-`attributes,items,affixes,effects,flavors,rare-names,powers,paragon,skill-tags,skills` です。
+`attributes,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,flavors,rare-names,powers,paragon,skill-tags,skills` です。
 `effects` はレジェンダリー、ユニーク、ミシック効果の説明文からゲーム内の
 装飾タグを除去し、Maxroll が表示する可変数値を正規表現に変換します。
 `flavors` はユニーク、ミシック装備のフレーバーテキストを変換します。
 `skill-tags` は `SkillTags` のタグ名と注釈本文を変換します。長い注釈ルールは
 装備Tooltip内だけで照合されます。
+`runes` はルーン名、ルーンワード名、条件・効果・オーバーフロー説明を変換し、
+英語・日本語CSV間のIndex差も吸収します。
+`tooltip-labels` はアイテムパワー、品質、祖霊・レジェンダリーなどの装備Tooltip
+共通ラベルを変換します。
+`weapon-tooltip` は秒間ダメージ、命中ごとのダメージ、秒間攻撃回数と速度区分を
+数値込みの行単位で変換します。
 レシピ名も必要な場合は `recipes` を `--categories` に追加できます。
 `--list-categories` で内容を確認できます。既存訳を CSV で置き換える場合だけ
 `--overwrite-existing` を指定してください。
