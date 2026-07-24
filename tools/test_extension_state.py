@@ -55,9 +55,9 @@ class ExtensionStateTests(unittest.TestCase):
     def test_equipment_tooltip_supplementary_ranges_are_excluded_from_matching(self):
         content = self.source("content.js")
         self.assertIn(
-            "child.classList.contains('d4-color-inactive')", content
+            "element.classList.contains('d4-color-inactive')", content
         )
-        self.assertIn("DYNAMIC_VALUE_TEXT.test(child.textContent)", content)
+        self.assertIn("DYNAMIC_VALUE_TEXT.test(element.textContent)", content)
         self.assertIn("SUPPLEMENTARY_VALUE_MARKER_TEXT", content)
         self.assertIn(
             "これは原文データには存在しない補足表示なので、効果文の照合から外す",
@@ -154,6 +154,20 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("characterData: true", content)
         self.assertIn("mutation.type === 'characterData'", content)
         self.assertIn("scheduleTranslation(mutation.target.parentElement)", content)
+        self.assertIn("function scheduleTooltipTranslation(root)", content)
+        self.assertIn("pendingTooltipRoots.add(closestTooltip)", content)
+        self.assertIn("tooltipTranslationTimer = setTimeout(() =>", content)
+        self.assertIn("}, 0);", content)
+        self.assertIn("if (observeDOMTimer) {", content)
+        self.assertIn("observeDOMTimer = null;", content)
+        self.assertIn("const isConcatenatedRunePattern =", content)
+        self.assertIn("isConcatenatedRunePattern ? 'g' : 'gi'", content)
+        self.assertIn("function isSupplementaryValueElement(element)", content)
+        self.assertIn(
+            "SUPPLEMENTARY_VALUE_MARKER_TEXT.test(element.textContent)",
+            content,
+        )
+        self.assertIn("!anchorRoots.includes(root)", content)
         self.assertIn("'aria-selected'", content)
         self.assertIn("'title'", content)
         self.assertIn("replaceTitleAttributes(regexTable, undefined, root)", content)

@@ -178,7 +178,13 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             Rule(
                 "runes",
                 "ルーン名、ルーンワード名、条件・効果・オーバーフロー説明",
-                lambda row: row.file_name.startswith("Item_Rune_"),
+                lambda row: (
+                    row.file_name.startswith("Item_Rune_")
+                    or (
+                        row.file_name == "UIToolTips"
+                        and row.key == "RunewordCompleteWithFrequency"
+                    )
+                ),
             ),
         ),
         (
@@ -505,8 +511,28 @@ def create_d4_description_pairs(
 ) -> list[tuple[str, str]]:
     """全文に加え、Maxrollが別ブロックへ描画する改行単位の規則も作る。"""
     pairs: list[tuple[str, str]] = []
+
+    # RuneDescriptionの{s1}などは実際の数値に置き換わるため、
+    # 色タグだけを除去したテンプレート規則を通常の説明文規則より先に作る。
+    def strip_format_tags_preserving_placeholders(value: str) -> str:
+        return D4_FORMAT_TAG_RE.sub(
+            lambda match: (
+                match.group(0)
+                if PLACEHOLDER_RE.fullmatch(match.group(0))
+                else ""
+            ),
+            value,
+        ).strip()
+
+    template_pair = create_template_pair(
+        strip_format_tags_preserving_placeholders(english),
+        strip_format_tags_preserving_placeholders(japanese),
+    )
+    if template_pair:
+        pairs.append(template_pair)
+
     full_pair = create_d4_description_pair(english, japanese)
-    if full_pair:
+    if full_pair and full_pair not in pairs:
         pairs.append(full_pair)
 
     english_lines = [line.strip() for line in english.splitlines() if line.strip()]
@@ -516,6 +542,52 @@ def create_d4_description_pairs(
             line_pair = create_d4_description_pair(english_line, japanese_line)
             if line_pair and line_pair not in pairs:
                 pairs.append(line_pair)
+    return pairs
+
+
+def create_rune_tooltip_pairs(
+    en_row: CsvRow, ja_row: CsvRow
+) -> list[tuple[str, str]]:
+    """連結ルーン名とルーンワードの表示用文言を含む規則を作る。"""
+    if (
+        en_row.file_name == "UIToolTips"
+        and en_row.key == "RunewordCompleteWithFrequency"
+    ):
+        return [
+            (
+                rf"\({D4_VALUE_CAPTURE}\s+(?:times|time)\)",
+                "（これを$1回行う）",
+            )
+        ]
+
+    pairs = create_d4_description_pairs(
+        en_row.translation,
+        ja_row.translation,
+    )
+    if en_row.key != "Name":
+        return pairs
+
+    english = clean_color_tags(en_row.translation)
+    japanese = clean_color_tags(ja_row.translation)
+    if not english or not japanese:
+        return pairs
+
+    # Maxrollは条件ルーン名と効果ルーン名を空白なしで連結する。
+    # 通常の単語境界規則は残しつつ、連結位置だけを追加規則で補う。
+    if en_row.file_name.startswith("Item_Rune_Condition_"):
+        pairs.append(
+            (
+                rf"{_escape_regex_literal(english)}(?=[A-Z])",
+                japanese,
+            )
+        )
+    elif en_row.file_name.startswith("Item_Rune_Effect_"):
+        pairs.append(
+            (
+                rf"(?<=[a-z]){_escape_regex_literal(english)}",
+                japanese,
+            )
+        )
     return pairs
 
 
@@ -756,6 +828,8 @@ def merge_csv_files(
             effect_pairs = (
                 create_weapon_tooltip_pairs(en_row, ja_row)
                 if category == "weapon-tooltip"
+                else create_rune_tooltip_pairs(en_row, ja_row)
+                if category == "runes"
                 else create_flavor_description_pairs(
                     en_row.translation, ja_row.translation
                 )

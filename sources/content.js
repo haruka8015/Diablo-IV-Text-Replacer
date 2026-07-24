@@ -53,7 +53,16 @@ chrome.storage.sync.get(['enabled'], function(result) {
       const escapedPattern = pattern.replace(/['’]/g, "['’]");
       const leadingBoundary = /^[A-Za-z0-9_]/.test(pattern) ? '\\b' : '';
       const trailingBoundary = /[A-Za-z0-9_]$/.test(pattern) ? '\\b' : '';
-      return new RegExp(`${leadingBoundary}${escapedPattern}${trailingBoundary}`, 'gi');
+      // 空白なしで連結されたルーン名の補助規則はCamelCase境界を使う。
+      // Unique末尾の"que"などを誤変換しないよう、この規則だけ大小を区別する。
+      const isConcatenatedRunePattern =
+        pattern.includes('(?=[A-Z])') ||
+        pattern.includes('(?<=[a-z])');
+      const flags = isConcatenatedRunePattern ? 'g' : 'gi';
+      return new RegExp(
+        `${leadingBoundary}${escapedPattern}${trailingBoundary}`,
+        flags
+      );
     }
 
     function loadTranslations() {
@@ -362,7 +371,9 @@ chrome.storage.sync.get(['enabled'], function(result) {
         const supplementaryRoots = supplementaryRangeNodes
           .map(topLevelChild)
           .filter((root, index, roots) =>
-            root && roots.indexOf(root) === index
+            root &&
+            roots.indexOf(root) === index &&
+            !anchorRoots.includes(root)
           );
         const movableRoots = new Set([...anchorRoots, ...supplementaryRoots]);
         const canReorder =
@@ -435,18 +446,24 @@ chrome.storage.sync.get(['enabled'], function(result) {
         // <span class="d4-color-inactive">[最小値 - 最大値]</span> が追加される。
         // これは原文データには存在しない補足表示なので、効果文の照合から外す。
         // span 自体はDOMに残るため、Maxrollの色・配置・数値表示は維持される。
-        if (
-          child.classList.contains('d4-color-inactive') &&
-          (
-            DYNAMIC_VALUE_TEXT.test(child.textContent) ||
-            SUPPLEMENTARY_VALUE_MARKER_TEXT.test(child.textContent)
-          )
-        ) {
+        if (isSupplementaryValueElement(child)) {
           collectInlineTextNodes(child, supplementaryRangeNodes);
           return;
         }
         collectInlineTextNodes(child, textNodes, supplementaryRangeNodes);
       });
+    }
+
+    function isSupplementaryValueElement(element) {
+      // [+]・[x]などの演算種別マーカーはMaxrollの版によって色クラスが異なる。
+      // クラスに依存せず文字列で除外し、表示用DOM自体はそのまま保持する。
+      if (SUPPLEMENTARY_VALUE_MARKER_TEXT.test(element.textContent)) {
+        return true;
+      }
+      return (
+        element.classList.contains('d4-color-inactive') &&
+        DYNAMIC_VALUE_TEXT.test(element.textContent)
+      );
     }
 
     function hasBlockBoundaryChild(node) {
@@ -494,13 +511,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
           !IGNORED_TEXT_TAGS.has(child.tagName) &&
           !child.isContentEditable
         ) {
-          if (
-            child.classList.contains('d4-color-inactive') &&
-            (
-              DYNAMIC_VALUE_TEXT.test(child.textContent) ||
-              SUPPLEMENTARY_VALUE_MARKER_TEXT.test(child.textContent)
-            )
-          ) {
+          if (isSupplementaryValueElement(child)) {
             collectInlineTextNodes(child, supplementaryRangeNodes);
             return;
           }
@@ -599,18 +610,79 @@ chrome.storage.sync.get(['enabled'], function(result) {
     }
 
     let observeDOMTimer;
+    let tooltipTranslationTimer;
 
     function observeDOM(regexTable) {
       const pendingRoots = new Set();
+      const pendingTooltipRoots = new Set();
+
+      function compactConnectedRoots(roots) {
+        return Array.from(roots).filter(candidate =>
+          candidate && candidate.isConnected &&
+          !Array.from(roots).some(other =>
+            other !== candidate &&
+            other.nodeType === 1 &&
+            other.contains(candidate)
+          )
+        );
+      }
+
+      // Tooltipは表示時間が短いため、Equipment全体の再翻訳を待たずに
+      // 専用キューで追加されたTooltipだけを即時翻訳する。
+      function scheduleTooltipTranslation(root) {
+        const element = root?.nodeType === 3 ? root.parentElement : root;
+        if (!element || element.nodeType !== 1) {
+          return false;
+        }
+
+        const closestTooltip = element.closest(LONG_TEXT_TOOLTIP_SELECTOR);
+        if (closestTooltip) {
+          pendingTooltipRoots.add(closestTooltip);
+        }
+        element.querySelectorAll?.(LONG_TEXT_TOOLTIP_SELECTOR).forEach(tooltip => {
+          pendingTooltipRoots.add(tooltip);
+        });
+        if (!pendingTooltipRoots.size) {
+          return false;
+        }
+
+        // 連続したDOM更新で待機時間が延びないよう、既存タイマーはリセットしない。
+        if (!tooltipTranslationTimer) {
+          tooltipTranslationTimer = setTimeout(() => {
+            tooltipTranslationTimer = null;
+            if (!extensionEnabled) {
+              pendingTooltipRoots.clear();
+              return;
+            }
+
+            const tooltipRoots = compactConnectedRoots(pendingTooltipRoots);
+            pendingTooltipRoots.clear();
+            tooltipRoots.forEach(tooltipRoot => {
+              replaceText(tooltipRoot, regexTable);
+              replaceTitleAttributes(regexTable, undefined, tooltipRoot);
+            });
+          }, 0);
+        }
+        return Boolean(closestTooltip);
+      }
 
       function scheduleTranslation(root) {
         if (!root || !root.isConnected) {
           return;
         }
+        const rootIsInsideTooltip = scheduleTooltipTranslation(root);
+        if (rootIsInsideTooltip) {
+          return;
+        }
         pendingRoots.add(root.nodeType === 3 ? root.parentElement : root);
 
-        if (observeDOMTimer) clearTimeout(observeDOMTimer);
+        // デバウンスをリセットし続けると状態切替中の翻訳が始まらないため、
+        // 最初の変更から一定時間後に必ず処理するスロットルとして扱う。
+        if (observeDOMTimer) {
+          return;
+        }
         observeDOMTimer = setTimeout(() => {
+          observeDOMTimer = null;
           if (!extensionEnabled) {
             pendingRoots.clear();
             return;
@@ -618,14 +690,7 @@ chrome.storage.sync.get(['enabled'], function(result) {
 
           const roots = pendingRoots.size > DOM_CHANGE_MUTATION_THRESHOLD
             ? [document.body]
-            : Array.from(pendingRoots).filter(candidate =>
-                candidate && candidate.isConnected &&
-                !Array.from(pendingRoots).some(other =>
-                  other !== candidate &&
-                  other.nodeType === 1 &&
-                  other.contains(candidate)
-                )
-              );
+            : compactConnectedRoots(pendingRoots);
           pendingRoots.clear();
 
           roots.forEach(root => {

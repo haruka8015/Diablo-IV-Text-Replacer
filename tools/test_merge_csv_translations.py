@@ -101,6 +101,13 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         )
         self.assertEqual(
             merge_tool.selected_category(
+                row("UIToolTips", "RunewordCompleteWithFrequency"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "runes",
+        )
+        self.assertEqual(
+            merge_tool.selected_category(
                 row("Hero", "ItemPower"),
                 merge_tool.DEFAULT_CATEGORIES,
             ),
@@ -469,6 +476,85 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 pattern, replacement = pairs[0]
                 self.assertRegex(rendered, pattern)
                 self.assertEqual(replacement, expected)
+
+    def test_concatenated_rune_names_use_camel_case_boundaries(self):
+        def csv_row(file_name, translation):
+            return merge_tool.CsvRow(
+                ("1", file_name, "1", "2", "Name"),
+                file_name,
+                "Name",
+                translation,
+                1,
+            )
+
+        pairs = []
+        pairs.extend(
+            merge_tool.create_rune_tooltip_pairs(
+                csv_row("Item_Rune_Condition_AllSkillsOnCD", "Yul"),
+                csv_row("Item_Rune_Condition_AllSkillsOnCD", "ユル"),
+            )
+        )
+        pairs.extend(
+            merge_tool.create_rune_tooltip_pairs(
+                csv_row("Item_Rune_Effect_Druid_EarthenBulwark", "Que"),
+                csv_row("Item_Rune_Effect_Druid_EarthenBulwark", "キュー"),
+            )
+        )
+        rendered = "YulQue"
+        for pattern, replacement in pairs:
+            rendered = re.sub(pattern, replacement, rendered)
+        self.assertEqual(rendered, "ユルキュー")
+
+    def test_rune_effect_keeps_s_placeholder_as_dynamic_value(self):
+        english = (
+            "{c_RuneEffect}Invoke the Druid's "
+            "{c_important}Earthen Bulwark{/c} Skill for "
+            "{c_number}{s1}{/c} seconds, granting yourself a "
+            "{c_important}{u}Barrier{/u}{/c}.{/c}"
+        )
+        japanese = (
+            "{c_RuneEffect}{c_number}{s1}{/c}秒間、ドルイドのスキル"
+            "{c_important}〈大地の護り〉を引き起こし、"
+            "{c_important}{u}障壁{/u}{/c}を獲得する。{/c}"
+        )
+        pairs = merge_tool.create_d4_description_pairs(english, japanese)
+        matching = [
+            replacement
+            for pattern, replacement in pairs
+            if re.search(
+                pattern,
+                "Invoke the Druid's Earthen Bulwark Skill for "
+                "3 seconds, granting yourself a Barrier.",
+            )
+        ]
+        self.assertIn(
+            "$1秒間、ドルイドのスキル〈大地の護り〉を引き起こし、"
+            "障壁を獲得する。",
+            matching,
+        )
+
+    def test_runeword_frequency_matches_singular_and_plural(self):
+        row = lambda translation: merge_tool.CsvRow(  # noqa: E731
+            (
+                "4280",
+                "UIToolTips",
+                "224",
+                "946958237",
+                "RunewordCompleteWithFrequency",
+            ),
+            "UIToolTips",
+            "RunewordCompleteWithFrequency",
+            translation,
+            1,
+        )
+        pairs = merge_tool.create_rune_tooltip_pairs(
+            row("{s1}([RunewordFrequency()] |4time:times;)"),
+            row("{s1}（これを[RunewordFrequency()]回行う）"),
+        )
+        pattern, replacement = pairs[0]
+        self.assertRegex("(6 times)", pattern)
+        self.assertRegex("(1 time)", pattern)
+        self.assertEqual(replacement, "（これを$1回行う）")
 
     def test_evade_cooldown_attribute_expands_plural_control_text(self):
         def csv_row(translation):
