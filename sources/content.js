@@ -13,7 +13,10 @@ const BLOCK_BOUNDARY_TAGS = new Set([
   'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV', 'OL', 'P', 'PRE',
   'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH', 'THEAD', 'TR', 'UL'
 ]);
-const IGNORED_TEXT_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT']);
+const IGNORED_TEXT_TAGS = new Set([
+  'SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS',
+  'IFRAME', 'OBJECT'
+]);
 const DYNAMIC_VALUE_TEXT = /^\s*(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%x|x%|%|x|\+)?)\s*$/;
 const SUPPLEMENTARY_VALUE_MARKER_TEXT =
   /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
@@ -22,6 +25,12 @@ const LONG_TEXT_TOOLTIP_SELECTOR =
 const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li';
 const DROP_SOURCE_KEY_PREFIX = '__D4T_DROP_SOURCE__:';
 const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
+const MAXROLL_INTERACTIVE_PARAGON_SELECTOR =
+  '[class*="_D4PlannerPageParagon__embed_"]';
+// パラゴン章の説明文はChrome Translator APIで翻訳し、
+// 大量のDOM更新が発生するボード描画領域だけをAPI翻訳から除外する。
+const MAXROLL_CHROME_TRANSLATION_EXCLUDED_SELECTOR =
+  MAXROLL_INTERACTIVE_PARAGON_SELECTOR;
 const MAXROLL_GUIDE_BLOCK_SELECTOR = [
   'main article h1',
   '.maxroll-rich-text-editor p',
@@ -82,6 +91,8 @@ chrome.storage.sync.get(
     let dropSourceTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
+    let compiledPatternIndex = null;
+    let compiledWholeSentencePatternIndex = null;
     let activeRegexTable = null;
     let domObserverStarted = false;
 
@@ -154,6 +165,8 @@ chrome.storage.sync.get(
                 regex: createTranslationRegex(pattern),
                 replacement,
                 wholeSentence,
+                sourcePattern: pattern,
+                order: 0,
                 // 正規表現キーの文字数は実際の表示文字数より長くなるため、
                 // 長さによる除外を行わない。
                 minLength: /[\\()[\]{}+*?|]/.test(pattern) ? 0 : pattern.length
@@ -164,6 +177,17 @@ chrome.storage.sync.get(
                 compiledPatterns.push(compiledPattern);
               }
             });
+
+            compiledPatterns.forEach((pattern, order) => {
+              pattern.order = order;
+            });
+            compiledWholeSentencePatterns.forEach((pattern, order) => {
+              pattern.order = order;
+            });
+            compiledPatternIndex = buildCompiledPatternIndex(compiledPatterns);
+            compiledWholeSentencePatternIndex = buildCompiledPatternIndex(
+              compiledWholeSentencePatterns
+            );
             
             if (D4DEBUG_DISPLAY) {
               console.log('[D4T] Loaded translation table:', {
@@ -184,11 +208,66 @@ chrome.storage.sync.get(
           });
     }
 
-    // 最適化された変換処理関数
-    function applyCompiledPatternList(text, patterns, stats, matchInfo) {
-      const textLength = text.length;
+    function buildCompiledPatternIndex(patterns) {
+      const byFirstWord = new Map();
+      const unindexed = [];
 
-      for (let {regex, replacement, minLength, wholeSentence} of patterns) {
+      patterns.forEach(pattern => {
+        // 先頭の通常単語は、この正規表現が一致する際に必ず含まれる。
+        // 正規表現構文から始まるルールは安全側の全件候補に残す。
+        const match = pattern.sourcePattern.match(/^([A-Za-z0-9_]{2,})/);
+        if (!match) {
+          unindexed.push(pattern);
+          return;
+        }
+        const key = match[1].toLocaleLowerCase('en-US');
+        const bucket = byFirstWord.get(key) || [];
+        bucket.push(pattern);
+        byFirstWord.set(key, bucket);
+      });
+
+      return {byFirstWord, unindexed};
+    }
+
+    function selectCompiledPatterns(text, patterns, patternIndex) {
+      if (!/[A-Za-z]/.test(text)) {
+        return [];
+      }
+      if (!patternIndex) {
+        return patterns;
+      }
+
+      const candidates = new Set(patternIndex.unindexed);
+      const words = text.match(/[A-Za-z0-9_]+/g) || [];
+      words.forEach(word => {
+        const bucket = patternIndex.byFirstWord.get(
+          word.toLocaleLowerCase('en-US')
+        );
+        bucket?.forEach(pattern => candidates.add(pattern));
+      });
+      return Array.from(candidates).sort(
+        (left, right) => left.order - right.order
+      );
+    }
+
+    // 最適化された変換処理関数
+    function applyCompiledPatternList(
+      text,
+      patterns,
+      patternIndex,
+      stats,
+      matchInfo
+    ) {
+      const textLength = text.length;
+      const candidates = selectCompiledPatterns(
+        text,
+        patterns,
+        patternIndex
+      );
+
+      for (
+        let {regex, replacement, minLength, wholeSentence} of candidates
+      ) {
         if (minLength <= textLength) {
           if (stats) stats.attempts++;
           const newText = text.replace(regex, replacement);
@@ -216,11 +295,18 @@ chrome.storage.sync.get(
         text = applyCompiledPatternList(
           text,
           compiledWholeSentencePatterns,
+          compiledWholeSentencePatternIndex,
           stats,
           matchInfo
         );
       }
-      return applyCompiledPatternList(text, compiledPatterns, stats, matchInfo);
+      return applyCompiledPatternList(
+        text,
+        compiledPatterns,
+        compiledPatternIndex,
+        stats,
+        matchInfo
+      );
     }
 
     // 共通の変換処理関数（後方互換性のため残す）
@@ -679,6 +765,7 @@ chrome.storage.sync.get(
 
       return Array.from(blocks).filter(block =>
         !block.querySelector(MAXROLL_GUIDE_BLOCK_SELECTOR) &&
+        !block.closest(MAXROLL_CHROME_TRANSLATION_EXCLUDED_SELECTOR) &&
         (!visibleOnly || isVisibleGuideBlock(block)) &&
         block.textContent.trim()
       );
@@ -1265,6 +1352,7 @@ chrome.storage.sync.get(
       } else if (
         node.nodeType === 1 &&
         !IGNORED_TEXT_TAGS.has(node.tagName) &&
+        !node.hidden &&
         !node.isContentEditable
       ) {
         if (
@@ -1396,14 +1484,21 @@ chrome.storage.sync.get(
       const pendingTooltipRoots = new Set();
 
       function compactConnectedRoots(roots) {
-        return Array.from(roots).filter(candidate =>
-          candidate && candidate.isConnected &&
-          !Array.from(roots).some(other =>
-            other !== candidate &&
-            other.nodeType === 1 &&
-            other.contains(candidate)
+        const connectedRoots = new Set(
+          Array.from(roots).filter(candidate =>
+            candidate && candidate.isConnected
           )
         );
+        return Array.from(connectedRoots).filter(candidate => {
+          let ancestor = candidate.parentElement;
+          while (ancestor) {
+            if (connectedRoots.has(ancestor)) {
+              return false;
+            }
+            ancestor = ancestor.parentElement;
+          }
+          return true;
+        });
       }
 
       // Tooltipは表示時間が短いため、Equipment全体の再翻訳を待たずに
@@ -1447,6 +1542,12 @@ chrome.storage.sync.get(
 
       function scheduleTranslation(root) {
         if (!root || !root.isConnected) {
+          return;
+        }
+        const element = root.nodeType === 3 ? root.parentElement : root;
+        // Maxrollは非選択中の全ビルド派生もhiddenでDOMに保持する。
+        // 表示された時点の属性変更で処理すればよいので、非表示中は走査しない。
+        if (element?.closest?.('[hidden]')) {
           return;
         }
         const rootIsInsideTooltip = scheduleTooltipTranslation(root);
@@ -1496,6 +1597,17 @@ chrome.storage.sync.get(
             // 英語へ書き戻すことがある。親要素から再評価して分割文も連結する。
             scheduleTranslation(mutation.target.parentElement);
           } else if (mutation.type === 'attributes') {
+            if (
+              mutation.attributeName === 'class' &&
+              mutation.target.closest?.(
+                MAXROLL_INTERACTIVE_PARAGON_SELECTOR
+              ) &&
+              !mutation.target.closest?.(LONG_TEXT_TOOLTIP_SELECTOR)
+            ) {
+              // パラゴンのホバー・移動・選択はclassだけを連続更新する。
+              // 翻訳対象の文字列は変わらないため、配下の再走査は不要。
+              return;
+            }
             // 非表示の Equipment / Stat Priority パネルが表示された場合や、
             // tooltip の title が後から設定された場合も対象にする。
             scheduleTranslation(mutation.target);

@@ -317,6 +317,45 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("'title'", content)
         self.assertIn("replaceTitleAttributes(regexTable, undefined, root)", content)
 
+    def test_translation_hot_path_is_indexed_and_paragon_churn_is_ignored(self):
+        content = self.source("content.js")
+        self.assertIn("function buildCompiledPatternIndex(patterns)", content)
+        self.assertIn("function selectCompiledPatterns(", content)
+        self.assertIn("if (!/[A-Za-z]/.test(text))", content)
+        self.assertIn(
+            "pattern.sourcePattern.match(/^([A-Za-z0-9_]{2,})/)",
+            content,
+        )
+        self.assertIn("const connectedRoots = new Set(", content)
+        self.assertIn("connectedRoots.has(ancestor)", content)
+        self.assertNotIn("other.contains(candidate)", content)
+        self.assertIn("element?.closest?.('[hidden]')", content)
+        self.assertIn("MAXROLL_INTERACTIVE_PARAGON_SELECTOR", content)
+        self.assertIn("mutation.attributeName === 'class'", content)
+        self.assertIn("!node.hidden", content)
+
+    def test_maxroll_chrome_translation_skips_only_paragon_board_embed(self):
+        content = self.source("content.js")
+        self.assertIn(
+            "const MAXROLL_CHROME_TRANSLATION_EXCLUDED_SELECTOR =",
+            content,
+        )
+        self.assertIn(
+            "'[class*=\"_D4PlannerPageParagon__embed_\"]'",
+            content,
+        )
+        self.assertIn(
+            "MAXROLL_CHROME_TRANSLATION_EXCLUDED_SELECTOR =\n"
+            "  MAXROLL_INTERACTIVE_PARAGON_SELECTOR",
+            content,
+        )
+        self.assertIn(
+            "!block.closest(MAXROLL_CHROME_TRANSLATION_EXCLUDED_SELECTOR)",
+            content,
+        )
+        self.assertNotIn("isSkippedMaxrollParagonContent", content)
+        self.assertNotIn("maxrollParagonHoverActive", content)
+
     def test_sentence_patterns_ending_in_punctuation_do_not_get_a_word_boundary(self):
         content = self.source("content.js")
         self.assertIn("function createTranslationRegex", content)
