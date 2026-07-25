@@ -17,7 +17,7 @@ const IGNORED_TEXT_TAGS = new Set([
   'SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS',
   'IFRAME', 'OBJECT'
 ]);
-const DYNAMIC_VALUE_TEXT = /^\s*(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%x|x%|%|x|\+)?)\s*$/;
+const DYNAMIC_VALUE_TEXT = /^\s*(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[x\]|%x|x%|%|x|\+)?)\s*$/;
 const SUPPLEMENTARY_VALUE_MARKER_TEXT =
   /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
 const LONG_TEXT_TOOLTIP_SELECTOR =
@@ -1278,8 +1278,11 @@ chrome.storage.sync.get(
     }
 
     function hasBlockBoundaryChild(node) {
-      return Array.from(node.children).some(child =>
-        BLOCK_BOUNDARY_TAGS.has(child.tagName)
+      return (
+        Array.from(node.children).some(child =>
+          BLOCK_BOUNDARY_TAGS.has(child.tagName)
+        ) ||
+        Boolean(node.querySelector('br'))
       );
     }
 
@@ -1305,38 +1308,37 @@ chrome.storage.sync.get(
         supplementaryRangeNodes = [];
       }
 
-      node.childNodes.forEach(child => {
-        if (
-          child.nodeType === 1 &&
-          BLOCK_BOUNDARY_TAGS.has(child.tagName)
-        ) {
-          flushRun();
-          return;
-        }
+      function visitInlineRunNode(child) {
         if (child.nodeType === 3) {
           textNodes.push(child);
           return;
         }
         if (
-          child.nodeType === 1 &&
-          !IGNORED_TEXT_TAGS.has(child.tagName) &&
-          !child.isContentEditable
+          child.nodeType !== 1 ||
+          IGNORED_TEXT_TAGS.has(child.tagName) ||
+          child.isContentEditable
         ) {
-          if (isMaxrollGuideNode(child)) {
-            flushRun();
-            return;
-          }
-          if (isSupplementaryValueElement(child)) {
-            collectInlineTextNodes(child, supplementaryRangeNodes);
-            return;
-          }
-          collectInlineTextNodes(
-            child,
-            textNodes,
-            supplementaryRangeNodes
-          );
+          return;
         }
-      });
+        if (isMaxrollGuideNode(child)) {
+          flushRun();
+          return;
+        }
+        if (BLOCK_BOUNDARY_TAGS.has(child.tagName)) {
+          // Maxrollは改行を装飾spanの内側へ置くことがあるため、
+          // 直下だけでなく子孫のBRでも文章を分割する。
+          // ブロック要素の内容はreplaceTextの通常再帰へ任せる。
+          flushRun();
+          return;
+        }
+        if (isSupplementaryValueElement(child)) {
+          collectInlineTextNodes(child, supplementaryRangeNodes);
+          return;
+        }
+        child.childNodes.forEach(visitInlineRunNode);
+      }
+
+      node.childNodes.forEach(visitInlineRunNode);
       flushRun();
     }
 

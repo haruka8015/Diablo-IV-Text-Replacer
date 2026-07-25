@@ -11,9 +11,9 @@ class ExtensionStateTests(unittest.TestCase):
     def source(self, name):
         return (SOURCES / name).read_text(encoding="utf-8")
 
-    def test_extension_version_tracks_season_14_second_release(self):
+    def test_extension_version_tracks_season_14_third_release(self):
         manifest = json.loads(self.source("manifest.json"))
-        self.assertEqual(manifest["version"], "1.14.1")
+        self.assertEqual(manifest["version"], "1.14.2")
 
     def test_update_does_not_force_extension_on_or_inject_twice(self):
         background = self.source("background.js")
@@ -279,6 +279,16 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn(
             "function replaceInlineRunsBetweenBlockBoundaries", content
         )
+        self.assertIn(
+            "Boolean(node.querySelector('br'))", content
+        )
+        self.assertIn("function visitInlineRunNode(child)", content)
+        self.assertIn(
+            "child.childNodes.forEach(visitInlineRunNode)", content
+        )
+        self.assertIn(
+            "ブロック要素の内容はreplaceTextの通常再帰へ任せる", content
+        )
         self.assertIn("BLOCK_BOUNDARY_TAGS.has(child.tagName)", content)
         self.assertIn(
             "replaceInlineRunsBetweenBlockBoundaries(node, regexTable, stats)",
@@ -381,6 +391,7 @@ class ExtensionStateTests(unittest.TestCase):
         translations = json.loads(self.source("translations.json"))
         self.assertEqual(translations["Gorilla"], "ゴリラ")
         self.assertEqual(translations["Jaguar"], "ジャガー")
+        self.assertEqual(translations["Eagle"], "イーグル")
         self.assertEqual(translations["Incarnate"], "顕現")
         self.assertEqual(translations["Centipede"], "センティピード")
 
@@ -460,6 +471,25 @@ class ExtensionStateTests(unittest.TestCase):
                 self.assertIsNotNone(pattern)
                 self.assertNotIn("{", translations[pattern])
                 self.assertNotIn("}", translations[pattern])
+
+    def test_harmony_of_ebewaka_matches_maxroll_multiplier_marker(self):
+        translations = json.loads(self.source("translations.json"))
+        live_text = (
+            "Your Skills deal [25 - 30]%[x] increased damage per Spirit type "
+            "they have."
+        )
+        replacement = next(
+            (
+                value
+                for pattern, value in translations.items()
+                if re.fullmatch(pattern, live_text, re.IGNORECASE)
+            ),
+            None,
+        )
+        self.assertEqual(
+            replacement,
+            "スキルの持つ精霊の種類1つにつき、そのダメージが$1増加する。",
+        )
 
     def test_live_maxroll_flavors_with_quoted_body_have_rules(self):
         translations = json.loads(self.source("translations.json"))

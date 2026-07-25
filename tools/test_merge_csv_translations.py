@@ -320,6 +320,28 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertNotIn("{", replacement)
         self.assertNotIn("}", replacement)
 
+    def test_multiplicative_value_matches_maxroll_bracket_marker(self):
+        pair = merge_tool.create_d4_description_pair(
+            "Your Skills deal {c_random}"
+            "[Affix_Value_1*100|%x|]{/c} increased damage per Spirit type "
+            "they have.",
+            "スキルの持つ精霊の種類1つにつき、そのダメージが{c_random}"
+            "[Affix_Value_1*100|%x|]{/c}増加する。",
+        )
+        self.assertIsNotNone(pair)
+        pattern, replacement = pair
+        maxroll_text = (
+            "Your Skills deal [25 - 30]%[x] increased damage per Spirit type "
+            "they have."
+        )
+        match = re.fullmatch(pattern, maxroll_text)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "[25 - 30]%[x]")
+        self.assertEqual(
+            replacement,
+            "スキルの持つ精霊の種類1つにつき、そのダメージが$1増加する。",
+        )
+
     def test_d4_static_mythic_effect_is_also_translated(self):
         pair = merge_tool.create_d4_description_pair(
             "{c_mythic}Enemies afflicted by more Damage over Time than "
