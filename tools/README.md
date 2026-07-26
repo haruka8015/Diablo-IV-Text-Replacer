@@ -30,6 +30,10 @@ python tools/merge_csv_translations.py output.json \
 `flavors` はユニーク、ミシック装備のフレーバーテキストを変換します。
 `skill-tags` は `SkillTags` のタグ名と注釈本文を変換します。長い注釈ルールは
 装備Tooltip内だけで照合されます。
+`skills` はクラススキル名に加え、`Power_<クラス名>_*` の基本説明・強化説明を
+Maxroll のスキルTooltip向け全文ルールへ変換します。`{payload:...}` などの
+可変値と、Maxroll が付加する `x [Damage]` / `[262.5%]` 表示も保持します。
+`{if:...}{else}...{/if}` は実際に表示される各分岐のルールへ展開します。
 `runes` はルーン名、ルーンワード名、条件・効果・オーバーフロー説明を変換し、
 英語・日本語CSV間のIndex差も吸収します。
 `tooltip-labels` はアイテムパワー、品質、祖霊・レジェンダリーなどの装備Tooltip

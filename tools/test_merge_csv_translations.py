@@ -179,6 +179,28 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             ),
             "skill-tags",
         )
+        for key in ("desc", "rankup_desc", "Mod6_Description"):
+            with self.subTest(skill_power_key=key):
+                self.assertEqual(
+                    merge_tool.selected_category(
+                        row("Power_Spiritborn_Jaguar_Potency", key),
+                        merge_tool.DEFAULT_CATEGORIES,
+                    ),
+                    "skills",
+                )
+        self.assertEqual(
+            merge_tool.selected_category(
+                row("SkillTree_SpiritBorn", "Modifiers"),
+                merge_tool.DEFAULT_CATEGORIES,
+            ),
+            "skills",
+        )
+        self.assertIsNone(
+            merge_tool.selected_category(
+                row("Power_NPC_Test", "desc"),
+                merge_tool.DEFAULT_CATEGORIES,
+            )
+        )
         self.assertEqual(
             merge_tool.selected_category(
                 row("ParagonBoardUI", "NodeTypeMagic"),
@@ -620,6 +642,146 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertEqual(replacement, "決意の発動中、荘厳度が$1増加する。")
         self.assertNotIn("{", replacement)
         self.assertNotIn("}", replacement)
+
+    def test_skill_tooltip_payload_matches_live_maxroll_value_markup(self):
+        pair = merge_tool.create_d4_description_pair(
+            "{/if}Smash down next to you with devastating force, creating "
+            "{c_number}2{/c} shockwaves on either side that overlap and each "
+            "deal {c_number}{payload:IMPACT}{/c} damage.",
+            "{/if}自身のそばを強烈に叩きつけ、両側に{c_number}2{/c}つの"
+            "衝撃波を発生させる。衝撃波は重なり合う部分があり、それぞれが"
+            "{c_number}{payload:IMPACT}{/c}のダメージを与える。",
+        )
+        self.assertIsNotNone(pair)
+        pattern, replacement = pair
+        rendered = (
+            "Smash down next to you with devastating force, creating 2 "
+            "shockwaves on either side that overlap and each deal "
+            "2094979 [262.5%] damage."
+        )
+        match = re.fullmatch(pattern, rendered)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "2094979 [262.5%]")
+        self.assertEqual(
+            replacement,
+            "自身のそばを強烈に叩きつけ、両側に2つの衝撃波を発生させる。"
+            "衝撃波は重なり合う部分があり、それぞれが$1のダメージを与える。",
+        )
+
+    def test_skill_tooltip_payload_keeps_maxroll_damage_annotation(self):
+        pair = merge_tool.create_d4_description_pair(
+            "Slash a short distance through an enemy, striking all enemies "
+            "along the way twice for a total of "
+            "{c_number}{payload:IMPACT_TOOLTIP}{/c} total damage.",
+            "敵をすり抜けるように短い距離を切り裂き、進路上のすべての敵を"
+            "2回攻撃して合計{c_number}{payload:IMPACT_TOOLTIP}{/c}の"
+            "ダメージを与える。",
+        )
+        self.assertIsNotNone(pair)
+        pattern, replacement = pair
+        rendered = (
+            "Slash a short distance through an enemy, striking all enemies "
+            "along the way twice for a total of 160% x [Damage] total damage."
+        )
+        match = re.fullmatch(pattern, rendered)
+        self.assertIsNotNone(match)
+        self.assertEqual(match.group(1), "160% x [Damage]")
+        self.assertIn("$1", replacement)
+
+    def test_skill_modifier_conditionals_create_each_rendered_branch(self):
+        pairs = merge_tool.create_d4_description_pairs(
+            "You gain {if:SF_26}{c_number}{SF_18}{/c} Vigor per second "
+            "while you have {c_important}Withering Fist's{/c} "
+            "{c_important}{u}Barrier{/u}{/c}."
+            "{else}{c_number}{SF_16}{/c} Vigor per second for every "
+            "Nearby enemy Poisoned by {c_important}Withering Fist{/c}, "
+            "up to {c_number}{SF_17}{/c}.{/if}",
+            "{if:SF_26}{c_important}〈萎縮を呼ぶ拳〉{/c}の"
+            "{c_important}{u}障壁{/u}{/c}が発動している間、"
+            "活力が毎秒{c_number}{SF_18}{/c}付与される。"
+            "{else}{c_important}〈萎縮を呼ぶ拳〉{/c}による毒を"
+            "受けている付近の敵1体ごとに、活力が毎秒"
+            "{c_number}{SF_16}{/c}付与される。最大"
+            "{c_number}{SF_17}{/c}。{/if}",
+        )
+        rendered_branches = (
+            "You gain 4 Vigor per second while you have "
+            "Withering Fist's Barrier.",
+            "You gain 5 Vigor per second for every Nearby enemy Poisoned by "
+            "Withering Fist, up to 15.",
+        )
+        for rendered in rendered_branches:
+            with self.subTest(rendered=rendered):
+                self.assertTrue(
+                    any(re.fullmatch(pattern, rendered) for pattern, _ in pairs)
+                )
+
+    def test_skill_conditionals_create_rules_for_each_rendered_line(self):
+        pairs = merge_tool.create_d4_description_pairs(
+            "{if:RESOURCE_COST}Costs 10 Vigor.{else}Cooldown: 15 seconds."
+            "{/if}\n"
+            "Smash enemies in front of you.\n"
+            "When attacked, you have a 5% chance to "
+            "{if:GAIN_VIGOR}gain 10 Vigor.{else}reset Payback's Cooldown."
+            "{/if}",
+            "{if:RESOURCE_COST}活力を10消費する。{else}クールダウン: 15秒。"
+            "{/if}\n"
+            "前方の敵を強打する。\n"
+            "攻撃を受けると、5%の確率で"
+            "{if:GAIN_VIGOR}活力を10得る。{else}〈仕返し〉のクールダウンが"
+            "リセットされる。{/if}",
+        )
+
+        rendered_line = (
+            "When attacked, you have a 5% chance to reset Payback's Cooldown."
+        )
+        matches = [
+            replacement
+            for pattern, replacement in pairs
+            if re.fullmatch(pattern, rendered_line)
+        ]
+        self.assertEqual(
+            matches,
+            ["攻撃を受けると、5%の確率で〈仕返し〉のクールダウンが"
+             "リセットされる。"],
+        )
+
+    def test_skill_value_markers_can_differ_between_language_csvs(self):
+        pair = merge_tool.create_d4_description_pair(
+            "Passive: Whenever you receive Healing, gain "
+            "[{SF_23}*100|%+|] Critical Strike Damage until your next "
+            "Critical Strike, up to [{SF_24}*100|%+|].",
+            "パッシブ: 回復効果を受けると、次のクリティカルヒットが発生するまで"
+            "クリティカルヒットダメージが[{SF_23}*100|%+|]増加する。"
+            "最大[{SF_24}*100|%|]。",
+        )
+
+        self.assertIsNotNone(pair)
+        pattern, replacement = pair
+        rendered = (
+            "Passive: Whenever you receive Healing, gain 25% Critical Strike "
+            "Damage until your next Critical Strike, up to 200%."
+        )
+        self.assertRegex(rendered, pattern)
+        self.assertEqual(
+            replacement,
+            "パッシブ: 回復効果を受けると、次のクリティカルヒットが発生するまで"
+            "クリティカルヒットダメージが$1増加する。最大$2。",
+        )
+
+    def test_value_only_description_fragments_are_rejected(self):
+        self.assertIsNone(
+            merge_tool.create_d4_description_pair(
+                "[{SF_1}|%|].",
+                "[{SF_1}|%|]増加する。",
+            )
+        )
+        self.assertIsNone(
+            merge_tool.create_d4_description_pair(
+                "[{SF_1}][{SF_2}]",
+                "[{SF_1}][{SF_2}]",
+            )
+        )
 
     def test_weapon_tooltip_rows_include_values_in_japanese_order(self):
         def csv_row(key, translation):

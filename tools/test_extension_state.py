@@ -187,7 +187,7 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("supplementaryRangeNodes,\n              node", content)
         self.assertIn("BLOCK_BOUNDARY_TAGS", content)
         self.assertIn("DYNAMIC_VALUE_TEXT", content)
-        self.assertIn("textNodes[anchor.nodeIndex].nodeValue = anchor.value", content)
+        self.assertIn("writeAnchorValue(anchor)", content)
         self.assertNotIn(".innerHTML =", content)
         self.assertNotIn("replaceWith(", content)
 
@@ -206,6 +206,10 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn(
             "collectInlineTextNodes(child, supplementaryRangeNodes)", content
         )
+        self.assertIn("MAXROLL_DAMAGE_ANNOTATION_TEXT", content)
+        self.assertIn(
+            "element.classList.contains('d4-color-lightgray')", content
+        )
         self.assertIn("anchors.length === requiredAnchorCount", content)
 
     def test_full_tooltip_sentence_preserves_formatting_spans_as_anchors(self):
@@ -216,13 +220,21 @@ class ExtensionStateTests(unittest.TestCase):
         )
         self.assertIn("function isStyledTextNode", content)
         self.assertIn("element.classList.contains('d4-style-u')", content)
-        self.assertIn("textNodes[anchor.nodeIndex].nodeValue = anchor.value", content)
+        self.assertIn("writeAnchorValue(anchor)", content)
         self.assertIn(
             "if (isTooltipSentence && requiredAnchorCount > 0)", content
         )
         self.assertIn("const orderedAnchors = [...anchors].sort(", content)
         self.assertIn("fragment.appendChild(anchorRoots[index])", content)
-        self.assertIn("containerNode.replaceChildren(fragment)", content)
+        self.assertIn("const rangeRoots = runTopLevelNodes.length", content)
+        self.assertIn("containerNode.insertBefore(fragment, insertionPoint)", content)
+        self.assertIn("element.classList.contains('d4-color-label')", content)
+        self.assertIn("const DYNAMIC_ORDINAL_TEXT =", content)
+        self.assertIn("ordinalMatch?.[1]", content)
+        self.assertIn("function writeAnchorValue(anchor)", content)
+        self.assertIn("anchor.wrapped", content)
+        self.assertIn("valueWithoutPossessive", content)
+        self.assertIn("function removeDuplicatedPercentSuffixes()", content)
         self.assertNotIn("textNode === outputNode ? newText : ''", content)
 
     def test_conditional_paragon_lines_prioritize_correct_value_order(self):
@@ -300,6 +312,23 @@ class ExtensionStateTests(unittest.TestCase):
             content,
         )
         self.assertIn("Boolean(tooltipContainer)", content)
+        self.assertIn(
+            "wholeSentence && matchInfo?.stopAfterWholeSentence",
+            content,
+        )
+        self.assertIn(
+            "matchInfo.stopAfterWholeSentence",
+            content,
+        )
+        self.assertIn(
+            "tooltipContainer?.matches(SKILL_TOOLTIP_SELECTOR)",
+            content,
+        )
+        for paragon_rarity in ("common", "magic", "rare", "legendary"):
+            self.assertIn(
+                f":not(.d4t-tip-{paragon_rarity})",
+                content,
+            )
 
     def test_specific_parameter_patterns_sort_before_generic_templates(self):
         content = self.source("content.js")
@@ -319,6 +348,29 @@ class ExtensionStateTests(unittest.TestCase):
             content,
         )
 
+    def test_possessive_skill_anchors_prefer_the_translated_base_name(self):
+        content = self.source("content.js")
+        self.assertIn(
+            "const possessiveMatch = originalStyledText.match(",
+            content,
+        )
+        self.assertIn(
+            "const translatedPossessiveBase = possessiveMatch",
+            content,
+        )
+        self.assertIn(
+            "newText.includes(translatedPossessiveBase)",
+            content,
+        )
+        self.assertIn(
+            "const translatedInflectedBase = inflectedBase",
+            content,
+        )
+        self.assertIn(
+            "newText.includes(translatedInflectedBase)",
+            content,
+        )
+
     def test_maxroll_br_separated_effect_lines_are_joined_independently(self):
         content = self.source("content.js")
         self.assertIn(
@@ -327,10 +379,14 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn(
             "Boolean(node.querySelector('br'))", content
         )
-        self.assertIn("function visitInlineRunNode(child)", content)
+        self.assertIn("function visitInlineRunNode(child, topLevelRoot)", content)
         self.assertIn(
-            "child.childNodes.forEach(visitInlineRunNode)", content
+            "visitInlineRunNode(grandchild, topLevelRoot)", content
         )
+        self.assertIn("runTopLevelNodes", content)
+        self.assertIn("Array.from(node.childNodes).forEach(child =>", content)
+        self.assertIn("function normalizeDuplicatedDynamicSuffixes(node)", content)
+        self.assertIn("normalizeDuplicatedDynamicSuffixes(node)", content)
         self.assertIn(
             "ブロック要素の内容はreplaceTextの通常再帰へ任せる", content
         )
@@ -365,6 +421,10 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("function isSupplementaryValueElement(element)", content)
         self.assertIn(
             "SUPPLEMENTARY_VALUE_MARKER_TEXT.test(element.textContent)",
+            content,
+        )
+        self.assertIn(
+            "node.nodeType === 1 && isSupplementaryValueElement(node)",
             content,
         )
         self.assertIn("!anchorRoots.includes(root)", content)
@@ -583,22 +643,22 @@ class ExtensionStateTests(unittest.TestCase):
 
     def test_widows_web_full_effect_has_tag_free_translation(self):
         translations = json.loads(self.source("translations.json"))
-        key = next(
-            key
-            for key in translations
+        values = [
+            value
+            for key, value in translations.items()
             if key.startswith(
                 r"Your\s+Critical\s+Strikes\s+cause\s+your\s+Poisoning"
             )
-        )
-        value = translations[key]
-        self.assertEqual(
-            value,
+        ]
+        self.assertIn(
             "クリティカルヒットが敵に与えた中毒効果を炸裂させ、即座に合計"
             "中毒ダメージの$1を標的に与えると同時に、この炸裂の$2のダメージ"
             "を周囲の敵に与え、メインの標的から中毒効果を除去する。",
+            values,
         )
-        self.assertNotIn("{", value)
-        self.assertNotIn("}", value)
+        for value in values:
+            self.assertNotIn("{", value)
+            self.assertNotIn("}", value)
 
     def test_reported_midgame_equipment_effects_have_renderable_rules(self):
         translations = json.loads(self.source("translations.json"))
@@ -725,6 +785,54 @@ class ExtensionStateTests(unittest.TestCase):
         )
         self.assertNotIn("{", replacement)
         self.assertNotIn("}", replacement)
+
+    def test_maxroll_skill_tooltip_power_descriptions_are_renderable(self):
+        translations = json.loads(self.source("translations.json"))
+        samples = {
+            (
+                "Smash down next to you with devastating force, creating 2 "
+                "shockwaves on either side that overlap and each deal "
+                "2094979 [262.5%] damage."
+            ): (
+                "自身のそばを強烈に叩きつけ、両側に2つの衝撃波を発生させる。"
+                "衝撃波は重なり合う部分があり、それぞれが"
+                "2094979 [262.5%]のダメージを与える。"
+            ),
+            (
+                "Slash a short distance through an enemy, striking all enemies "
+                "along the way twice for a total of "
+                "160% x [Damage] total damage."
+            ): (
+                "斬撃しながら敵の間を短距離進み、通り過ぎた敵すべてに"
+                "2回攻撃して160% x [Damage]の合計ダメージを与える。"
+            ),
+        }
+        for live_text, expected in samples.items():
+            with self.subTest(live_text=live_text):
+                matching = [
+                    (pattern, replacement)
+                    for pattern, replacement in translations.items()
+                    if re.fullmatch(pattern, live_text, re.IGNORECASE)
+                ]
+                self.assertTrue(matching)
+                pattern, replacement = min(
+                    matching,
+                    key=lambda pair: len(pair[0]),
+                )
+                python_replacement = re.sub(
+                    r"\$(\d+)",
+                    r"\\g<\1>",
+                    replacement,
+                )
+                self.assertEqual(
+                    re.sub(
+                        pattern,
+                        python_replacement,
+                        live_text,
+                        flags=re.IGNORECASE,
+                    ),
+                    expected,
+                )
 
 
 if __name__ == "__main__":

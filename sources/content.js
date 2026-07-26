@@ -17,15 +17,26 @@ const IGNORED_TEXT_TAGS = new Set([
   'SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS',
   'IFRAME', 'OBJECT'
 ]);
-const DYNAMIC_VALUE_TEXT = /^\s*(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[x\]|%x|x%|%|x|\+)?)\s*$/;
+const DYNAMIC_VALUE_TEXT = /^\s*[\(（]?(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[x\]|%x|x%|%|x|\+)?)[\)）]?\s*$/;
+const DYNAMIC_ORDINAL_TEXT = /^\s*(\d+)(?:st|nd|rd|th)\s*$/i;
 const SUPPLEMENTARY_VALUE_MARKER_TEXT =
   /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
+const MAXROLL_DAMAGE_ANNOTATION_TEXT =
+  /^\s*(?:x\s*)?\[[^\]\r\n]+\]\s*$/i;
 const PARAGON_CONDITIONAL_BONUS_TEXT =
   /^\s*Bonus:\s*Another\b[\s\S]*\bif\s+requirements\s+met:?\s*$/i;
 const PARAGON_ATTRIBUTE_REQUIREMENT_TEXT =
   /^\s*(?:[◆♦•·]\s*)?(?:Required(?:\s*\([^)]*\))?:\s*)?[+-]?\d[\d,.]*\s*\/[\s\S]*\b(?:Strength|Intelligence|Willpower|Dexterity)\b/i;
 const LONG_TEXT_TOOLTIP_SELECTOR =
   '.d4t-GameTooltip, .d4t-SkillTagTooltip';
+const SKILL_TOOLTIP_SELECTOR = [
+  '.d4t-SkillTagTooltip',
+  '.d4t-tip-skill' +
+    ':not(.d4t-tip-common)' +
+    ':not(.d4t-tip-magic)' +
+    ':not(.d4t-tip-rare)' +
+    ':not(.d4t-tip-legendary)'
+].join(', ');
 const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li';
 const DROP_SOURCE_KEY_PREFIX = '__D4T_DROP_SOURCE__:';
 const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
@@ -287,6 +298,9 @@ chrome.storage.sync.get(
             if (matchInfo && wholeSentence) {
               matchInfo.wholeSentence = true;
             }
+            if (wholeSentence && matchInfo?.stopAfterWholeSentence) {
+              return text;
+            }
           }
         }
       }
@@ -309,6 +323,12 @@ chrome.storage.sync.get(
           stats,
           matchInfo
         );
+        if (
+          matchInfo?.wholeSentence &&
+          matchInfo.stopAfterWholeSentence
+        ) {
+          return text;
+        }
       }
       return applyCompiledPatternList(
         text,
@@ -1029,7 +1049,8 @@ chrome.storage.sync.get(
       regexTable,
       stats,
       supplementaryRangeNodes = [],
-      containerNode = null
+      containerNode = null,
+      runTopLevelNodes = []
     ) {
       const originalText = textNodes.map(textNode => textNode.nodeValue).join('');
       stats.nodes += textNodes.length;
@@ -1039,7 +1060,12 @@ chrome.storage.sync.get(
         containerNode?.nodeType === 1
           ? containerNode.closest(LONG_TEXT_TOOLTIP_SELECTOR)
           : textNodes[0]?.parentElement?.closest(LONG_TEXT_TOOLTIP_SELECTOR);
-      const matchInfo = {wholeSentence: false};
+      const matchInfo = {
+        wholeSentence: false,
+        stopAfterWholeSentence: Boolean(
+          tooltipContainer?.matches(SKILL_TOOLTIP_SELECTOR)
+        )
+      };
       const newText = applyRegexTransformations(
         originalText,
         regexTable,
@@ -1068,7 +1094,8 @@ chrome.storage.sync.get(
         while (element && element !== containerNode) {
           if (
             element.classList.contains('d4-style-u') ||
-            element.classList.contains('d4-color-important')
+            element.classList.contains('d4-color-important') ||
+            element.classList.contains('d4-color-label')
           ) {
             return true;
           }
@@ -1136,13 +1163,56 @@ chrome.storage.sync.get(
 
       textNodes.forEach((textNode, nodeIndex) => {
         const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT);
-        let value = dynamicMatch?.[1] || null;
+        const ordinalMatch = textNode.nodeValue.match(DYNAMIC_ORDINAL_TEXT);
+        let value = dynamicMatch?.[1] || ordinalMatch?.[1] || null;
 
         if (!value && isTooltipSentence && isStyledTextNode(textNode)) {
-          value = applyRegexTransformations(
+          const originalStyledText = textNode.nodeValue.trim();
+          const translatedStyledText = applyRegexTransformations(
             textNode.nodeValue,
             regexTable
           ).trim();
+          const possessiveMatch = originalStyledText.match(
+            /^([\s\S]+?)['’]s$/i
+          );
+          const translatedPossessiveBase = possessiveMatch
+            ? applyRegexTransformations(
+                possessiveMatch[1],
+                regexTable
+              ).trim()
+            : '';
+          value =
+            translatedPossessiveBase &&
+            newText.includes(translatedPossessiveBase)
+              ? translatedPossessiveBase
+              : translatedStyledText;
+          if (
+            textNode.parentElement?.closest('.d4-color-label') &&
+            originalStyledText.endsWith(':') &&
+            !newText.includes(value)
+          ) {
+            const translatedLabelEnd = newText.indexOf(':');
+            if (translatedLabelEnd >= 0) {
+              value = newText.slice(0, translatedLabelEnd + 1).trim();
+            }
+          }
+          if (value && !newText.includes(value)) {
+            const inflectedBase =
+              !possessiveMatch && /s$/i.test(originalStyledText)
+                ? originalStyledText.slice(0, -1)
+                : '';
+            const translatedInflectedBase = inflectedBase
+              ? applyRegexTransformations(
+                  inflectedBase,
+                  regexTable
+                ).trim()
+              : '';
+            value =
+              translatedInflectedBase &&
+              newText.includes(translatedInflectedBase)
+                ? translatedInflectedBase
+                : null;
+          }
         }
 
         if (!value) {
@@ -1160,6 +1230,14 @@ chrome.storage.sync.get(
             valuePosition = unsignedPosition;
           }
         }
+        if (valuePosition < 0 && /['’]s$/i.test(value)) {
+          const valueWithoutPossessive = value.replace(/['’]s$/i, '');
+          const possessivePosition = newText.indexOf(valueWithoutPossessive);
+          if (possessivePosition >= 0) {
+            value = valueWithoutPossessive;
+            valuePosition = possessivePosition;
+          }
+        }
         while (
           valuePosition >= 0 &&
           occupiedAnchorRanges.some(range =>
@@ -1172,7 +1250,12 @@ chrome.storage.sync.get(
         if (valuePosition < 0) {
           return;
         }
-        anchors.push({nodeIndex, value, valuePosition});
+        anchors.push({
+          nodeIndex,
+          value,
+          valuePosition,
+          wrapped: /^\s*[\(（]/.test(textNode.nodeValue)
+        });
         occupiedAnchorRanges.push({
           start: valuePosition,
           end: valuePosition + value.length
@@ -1190,6 +1273,45 @@ chrome.storage.sync.get(
           }
         }
         return true;
+      }
+
+      function writeAnchorValue(anchor) {
+        const anchorNode = textNodes[anchor.nodeIndex];
+        anchorNode.nodeValue = anchor.value;
+        if (!anchor.wrapped) {
+          return;
+        }
+        textNodes.forEach((textNode, index) => {
+          if (
+            index !== anchor.nodeIndex &&
+            textNode.parentElement === anchorNode.parentElement &&
+            /^\s*[\)）]\s*$/.test(textNode.nodeValue)
+          ) {
+            textNode.nodeValue = '';
+          }
+        });
+      }
+
+      function removeDuplicatedPercentSuffixes() {
+        anchors.forEach(anchor => {
+          if (!anchor.value.endsWith('%')) {
+            return;
+          }
+          for (
+            let index = anchor.nodeIndex + 1;
+            index < textNodes.length;
+            index++
+          ) {
+            if (!textNodes[index].nodeValue) {
+              continue;
+            }
+            if (textNodes[index].nodeValue.startsWith('%')) {
+              textNodes[index].nodeValue =
+                textNodes[index].nodeValue.slice(1);
+            }
+            break;
+          }
+        });
       }
 
       // Maxroll が色分けした可変数値の Text ノードはその場に残し、
@@ -1223,11 +1345,12 @@ chrome.storage.sync.get(
             anchor.nodeIndex,
             newText.slice(textPosition, anchor.valuePosition)
           );
-          textNodes[anchor.nodeIndex].nodeValue = anchor.value;
+          writeAnchorValue(anchor);
           nodePosition = anchor.nodeIndex + 1;
           textPosition = anchor.valuePosition + anchor.value.length;
         });
         writeSegment(nodePosition, textNodes.length, newText.slice(textPosition));
+        removeDuplicatedPercentSuffixes();
         return true;
       }
 
@@ -1259,21 +1382,29 @@ chrome.storage.sync.get(
             root &&
             roots.indexOf(root) === index &&
             !anchorRoots.includes(root)
-          );
+           );
         const movableRoots = new Set([...anchorRoots, ...supplementaryRoots]);
+        const rangeRoots = runTopLevelNodes.length
+          ? runTopLevelNodes
+          : Array.from(containerNode.childNodes);
         const canReorder =
           anchorRoots.every(Boolean) &&
           new Set(anchorRoots).size === anchorRoots.length &&
-          Array.from(containerNode.childNodes).every(child =>
+          rangeRoots.length > 0 &&
+          rangeRoots.every(child =>
+            child.parentNode === containerNode &&
+            (
             child.nodeType === 3 ||
             movableRoots.has(child) ||
             (child.nodeType === 1 && child.textContent.trim() === '')
+            )
           );
 
         if (canReorder) {
-          const emptyElements = Array.from(containerNode.children).filter(
+          const emptyElements = rangeRoots.filter(
             child => child.textContent.trim() === '' && !movableRoots.has(child)
           );
+          const insertionPoint = rangeRoots[rangeRoots.length - 1].nextSibling;
           const fragment = document.createDocumentFragment();
           emptyElements.forEach(element => fragment.appendChild(element));
           let outputPosition = 0;
@@ -1285,7 +1416,7 @@ chrome.storage.sync.get(
             if (segment) {
               fragment.appendChild(document.createTextNode(segment));
             }
-            textNodes[anchor.nodeIndex].nodeValue = anchor.value;
+            writeAnchorValue(anchor);
             fragment.appendChild(anchorRoots[index]);
             outputPosition = anchor.valuePosition + anchor.value.length;
           });
@@ -1294,7 +1425,12 @@ chrome.storage.sync.get(
             fragment.appendChild(document.createTextNode(trailingText));
           }
           supplementaryRoots.forEach(root => fragment.appendChild(root));
-          containerNode.replaceChildren(fragment);
+          rangeRoots.forEach(root => {
+            if (root.parentNode === containerNode) {
+              root.remove();
+            }
+          });
+          containerNode.insertBefore(fragment, insertionPoint);
           return true;
         }
       }
@@ -1315,7 +1451,7 @@ chrome.storage.sync.get(
       textNodes,
       supplementaryRangeNodes = []
     ) {
-      node.childNodes.forEach(child => {
+      Array.from(node.childNodes).forEach(child => {
         if (child.nodeType === 3) {
           textNodes.push(child);
           return;
@@ -1348,6 +1484,12 @@ chrome.storage.sync.get(
       if (SUPPLEMENTARY_VALUE_MARKER_TEXT.test(element.textContent)) {
         return true;
       }
+      if (
+        element.classList.contains('d4-color-lightgray') &&
+        MAXROLL_DAMAGE_ANNOTATION_TEXT.test(element.textContent)
+      ) {
+        return true;
+      }
       return (
         element.classList.contains('d4-color-inactive') &&
         DYNAMIC_VALUE_TEXT.test(element.textContent)
@@ -1363,6 +1505,21 @@ chrome.storage.sync.get(
       );
     }
 
+    function normalizeDuplicatedDynamicSuffixes(node) {
+      node.querySelectorAll(
+        '.d4-color-resource, .d4-color-number'
+      ).forEach(element => {
+        const sibling = element.nextSibling;
+        if (
+          element.textContent.trim().endsWith('%') &&
+          sibling?.nodeType === 3 &&
+          sibling.nodeValue.startsWith('%')
+        ) {
+          sibling.nodeValue = sibling.nodeValue.slice(1);
+        }
+      });
+    }
+
     function replaceInlineRunsBetweenBlockBoundaries(
       node,
       regexTable,
@@ -1370,6 +1527,7 @@ chrome.storage.sync.get(
     ) {
       let textNodes = [];
       let supplementaryRangeNodes = [];
+      let runTopLevelNodes = [];
 
       function flushRun() {
         if (textNodes.length) {
@@ -1378,15 +1536,24 @@ chrome.storage.sync.get(
             regexTable,
             stats,
             supplementaryRangeNodes,
-            node
+            node,
+            runTopLevelNodes
           );
         }
         textNodes = [];
         supplementaryRangeNodes = [];
+        runTopLevelNodes = [];
       }
 
-      function visitInlineRunNode(child) {
+      function addRunRoot(root) {
+        if (root && !runTopLevelNodes.includes(root)) {
+          runTopLevelNodes.push(root);
+        }
+      }
+
+      function visitInlineRunNode(child, topLevelRoot) {
         if (child.nodeType === 3) {
+          addRunRoot(topLevelRoot);
           textNodes.push(child);
           return;
         }
@@ -1409,14 +1576,20 @@ chrome.storage.sync.get(
           return;
         }
         if (isSupplementaryValueElement(child)) {
+          addRunRoot(topLevelRoot);
           collectInlineTextNodes(child, supplementaryRangeNodes);
           return;
         }
-        child.childNodes.forEach(visitInlineRunNode);
+        Array.from(child.childNodes).forEach(grandchild =>
+          visitInlineRunNode(grandchild, topLevelRoot)
+        );
       }
 
-      node.childNodes.forEach(visitInlineRunNode);
+      Array.from(node.childNodes).forEach(child =>
+        visitInlineRunNode(child, child)
+      );
       flushRun();
+      normalizeDuplicatedDynamicSuffixes(node);
     }
 
     function normalizeParagonGlyphRequirement(element) {
@@ -1483,6 +1656,9 @@ chrome.storage.sync.get(
       // 通常処理で複数spanを結合すると、色付き語句やTooltip要素の文字が
       // 先頭Textノードへ集約されてしまうため、ここでは触らない。
       if (isMaxrollGuideNode(node)) {
+        return stats;
+      }
+      if (node.nodeType === 1 && isSupplementaryValueElement(node)) {
         return stats;
       }
       if (node.nodeType === 3) {

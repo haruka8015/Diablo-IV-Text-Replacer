@@ -29,12 +29,29 @@ NAME_FIELDS = {"Name", "name", "AffixName"}
 AFFIX_FIELDS = {"Name", "name", "Name_Prefix", "Name_Suffix", "AffixName"}
 PARAGON_FIELDS = {"Name", "name"}
 POWER_NAME_RE = re.compile(r"^(?:Buff|Mod)\d+_Name$")
+PLAYER_SKILL_POWER_PREFIXES = tuple(
+    f"Power_{class_name}_"
+    for class_name in (
+        "Barbarian",
+        "Druid",
+        "Necromancer",
+        "Paladin",
+        "Rogue",
+        "Sorcerer",
+        "Spiritborn",
+        "Warlock",
+        "pal",
+        "sorc",
+        "spiritborn",
+    )
+)
 TOOLTIP_TEXT_CATEGORIES = {
     "drop-sources",
     "effects",
     "flavors",
     "runes",
     "skill-tags",
+    "skills",
     "weapon-tooltip",
 }
 DROP_SOURCE_KEY_PREFIX = "__D4T_DROP_SOURCE__:"
@@ -50,7 +67,17 @@ TEMPLATE_TOKEN_RE = re.compile(
 )
 PLACEHOLDER_RE = re.compile(r"\{(?:VALUE[^}]*|s\d+)\}", flags=re.IGNORECASE)
 D4_VALUE_TOKEN_RE = re.compile(
-    r"\[[^\[\]\r\n]+\]|\{SF_[^{}\r\n]+\}",
+    r"\[[^\[\]\r\n]+\]"
+    r"|\{(?:"
+    r"SF_[^{}\r\n]+"
+    r"|payload:[^{}\r\n]+"
+    r"|dot:[^{}\r\n]+"
+    r"|buffduration:[^{}\r\n]+"
+    r"|Resource\s+Cost"
+    r"|Combat\s+Effect\s+Chance"
+    r"|Cooldown\s+Time"
+    r"|Recharge\s+Time"
+    r")\}",
     flags=re.IGNORECASE,
 )
 D4_FORMAT_TAG_RE = re.compile(
@@ -58,6 +85,13 @@ D4_FORMAT_TAG_RE = re.compile(
     flags=re.IGNORECASE,
 )
 D4_PLURAL_TOKEN_RE = re.compile(r"\|4([^:;\r\n]+)(?::([^;\r\n]+))?;")
+D4_CONDITIONAL_RE = re.compile(
+    r"\{if:[^{}\r\n]+\}"
+    r"(?:(?P<true_else>[\s\S]*?)\{else\}(?P<false>[\s\S]*?)"
+    r"|(?P<true_only>[\s\S]*?))"
+    r"\{/if\}",
+    flags=re.IGNORECASE,
+)
 FLAVOR_ATTRIBUTION_RE = re.compile(
     r"^(?P<body>.+[.!?])(?P<spacing>\s+)(?P<attribution>-\s*.+)$",
     flags=re.DOTALL,
@@ -77,7 +111,8 @@ PARAGON_REQUIREMENT_VALUE_CAPTURE = (
 D4_VALUE_CAPTURE = (
     r"(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?"
     r"(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?"
-    r"\]?(?:%\[x\]|%x|x%|%|x|\+)?)"
+    r"\]?(?:%\[x\]|%x|x%|%|x|\+)?"
+    r"(?:\s+(?:x\s+)?\[[^\]\r\n]+\])?)"
 )
 
 
@@ -351,10 +386,17 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             "skills",
             Rule(
                 "skills",
-                "スキル名とスキルタグ名",
+                "スキル名、スキルタグ名、Power の説明文",
                 lambda row: (
-                    row.file_name.startswith("Skill_")
+                    row.file_name.startswith(("Skill_", "SkillTree_"))
                     or row.file_name == "SkillTagNames"
+                    or (
+                        row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES)
+                        and (
+                            row.key.lower() in {"desc", "rankup_desc"}
+                            or row.key.endswith("_Description")
+                        )
+                    )
                 ),
             ),
         ),
@@ -560,7 +602,22 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
 
 
 def _d4_value_token_id(token: str) -> str:
-    return re.sub(r"\s+", "", token.replace('""', '"')).lower()
+    normalized = re.sub(r"\s+", "", token.replace('""', '"')).lower()
+    # 表示上の加算/乗算マーカーは言語CSV間で省略されることがある。
+    # 値の参照元が同じなら、置換位置を対応付けられるよう同一視する。
+    return re.sub(r"\|(%)(?:\+|x)?\|", r"|\1|", normalized)
+
+
+def strip_d4_format_tags_preserving_values(value: str) -> str:
+    """色・制御タグだけを除き、Maxrollで実数化されるトークンは残す。"""
+    return D4_FORMAT_TAG_RE.sub(
+        lambda match: (
+            match.group(0)
+            if D4_VALUE_TOKEN_RE.fullmatch(match.group(0))
+            else ""
+        ),
+        value,
+    ).strip()
 
 
 def create_d4_description_pair(
@@ -571,8 +628,8 @@ def create_d4_description_pair(
     Blizzard の色・条件タグは DOM には現れないため除去し、角括弧内の
     Affix 式は Maxroll 上の実数値（範囲表記を含む）を受けるキャプチャにする。
     """
-    english = D4_FORMAT_TAG_RE.sub("", english).strip()
-    japanese = D4_FORMAT_TAG_RE.sub("", japanese).strip()
+    english = strip_d4_format_tags_preserving_values(english)
+    japanese = strip_d4_format_tags_preserving_values(japanese)
     japanese = _render_japanese_plural_tokens(japanese)
     text_without_value_tokens = D4_VALUE_TOKEN_RE.sub(
         "",
@@ -587,6 +644,9 @@ def create_d4_description_pair(
         return None
 
     english_tokens = list(D4_VALUE_TOKEN_RE.finditer(english))
+    english_literal = D4_VALUE_TOKEN_RE.sub("", english)
+    if english_tokens and not re.search(r"[A-Za-z]{2,}", english_literal):
+        return None
     if not english_tokens:
         if english == japanese:
             return None
@@ -637,6 +697,26 @@ def create_d4_description_pairs(
     """全文に加え、Maxrollが別ブロックへ描画する改行単位の規則も作る。"""
     pairs: list[tuple[str, str]] = []
 
+    def expand_conditionals(value: str) -> list[str]:
+        match = D4_CONDITIONAL_RE.search(value)
+        if not match:
+            return [value]
+        prefix = value[: match.start()]
+        suffix = value[match.end() :]
+        true_branch = (
+            match.group("true_else")
+            if match.group("true_else") is not None
+            else match.group("true_only")
+        )
+        branches = [true_branch or "", match.group("false") or ""]
+        expanded: list[str] = []
+        for branch in branches:
+            expanded.extend(
+                prefix + branch + remainder
+                for remainder in expand_conditionals(suffix)
+            )
+        return expanded
+
     # RuneDescriptionの{s1}などは実際の数値に置き換わるため、
     # 色タグだけを除去したテンプレート規則を通常の説明文規則より先に作る。
     def strip_format_tags_preserving_placeholders(value: str) -> str:
@@ -649,6 +729,39 @@ def create_d4_description_pairs(
             value,
         ).strip()
 
+    def append_description_and_line_pairs(
+        english_value: str,
+        japanese_value: str,
+    ) -> None:
+        description_pair = create_d4_description_pair(
+            english_value,
+            japanese_value,
+        )
+        if description_pair and description_pair not in pairs:
+            pairs.append(description_pair)
+
+        english_lines = [
+            line.strip()
+            for line in english_value.splitlines()
+            if line.strip()
+        ]
+        japanese_lines = [
+            line.strip()
+            for line in japanese_value.splitlines()
+            if line.strip()
+        ]
+        if len(english_lines) > 1 and len(english_lines) == len(japanese_lines):
+            for english_line, japanese_line in zip(
+                english_lines,
+                japanese_lines,
+            ):
+                line_pair = create_d4_description_pair(
+                    english_line,
+                    japanese_line,
+                )
+                if line_pair and line_pair not in pairs:
+                    pairs.append(line_pair)
+
     template_pair = create_template_pair(
         strip_format_tags_preserving_placeholders(english),
         strip_format_tags_preserving_placeholders(japanese),
@@ -656,17 +769,22 @@ def create_d4_description_pairs(
     if template_pair:
         pairs.append(template_pair)
 
-    full_pair = create_d4_description_pair(english, japanese)
-    if full_pair and full_pair not in pairs:
-        pairs.append(full_pair)
+    append_description_and_line_pairs(english, japanese)
 
-    english_lines = [line.strip() for line in english.splitlines() if line.strip()]
-    japanese_lines = [line.strip() for line in japanese.splitlines() if line.strip()]
-    if len(english_lines) > 1 and len(english_lines) == len(japanese_lines):
-        for english_line, japanese_line in zip(english_lines, japanese_lines):
-            line_pair = create_d4_description_pair(english_line, japanese_line)
-            if line_pair and line_pair not in pairs:
-                pairs.append(line_pair)
+    english_variants = expand_conditionals(english)
+    japanese_variants = expand_conditionals(japanese)
+    if (
+        len(english_variants) > 1
+        and len(english_variants) == len(japanese_variants)
+    ):
+        for english_variant, japanese_variant in zip(
+            english_variants,
+            japanese_variants,
+        ):
+            append_description_and_line_pairs(
+                english_variant,
+                japanese_variant,
+            )
     return pairs
 
 
@@ -1058,7 +1176,7 @@ def selected_category(row: CsvRow, categories: Iterable[str]) -> str | None:
 def load_json(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
-    with path.open("r", encoding="utf-8") as handle:
+    with path.open("r", encoding="utf-8-sig") as handle:
         data = json.load(handle)
     if not isinstance(data, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in data.items()
