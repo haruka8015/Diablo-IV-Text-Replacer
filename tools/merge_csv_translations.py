@@ -42,14 +42,22 @@ COLOR_TAG_RE = re.compile(
     r"\{/?c(?:_\w+|:[0-9A-Fa-f]{6,8})?\}",
     flags=re.IGNORECASE,
 )
+ICON_TAG_RE = re.compile(r"\{icon:[^{}\r\n]+\}", flags=re.IGNORECASE)
 TEMPLATE_TOKEN_RE = re.compile(
     r"\[[^\[\]]*\{(?:VALUE[^}]*)\}[^\[\]]*\]"
     r"|\{(?:VALUE[^}]*|s\d+)\}",
     flags=re.IGNORECASE,
 )
 PLACEHOLDER_RE = re.compile(r"\{(?:VALUE[^}]*|s\d+)\}", flags=re.IGNORECASE)
-D4_VALUE_TOKEN_RE = re.compile(r"\[[^\[\]\r\n]+\]")
-D4_FORMAT_TAG_RE = re.compile(r"\{[^{}\r\n]*\}")
+D4_VALUE_TOKEN_RE = re.compile(
+    r"\[[^\[\]\r\n]+\]|\{SF_[^{}\r\n]+\}",
+    flags=re.IGNORECASE,
+)
+D4_FORMAT_TAG_RE = re.compile(
+    r"\{(?!SF_)[^{}\r\n]*\}",
+    flags=re.IGNORECASE,
+)
+D4_PLURAL_TOKEN_RE = re.compile(r"\|4([^:;\r\n]+)(?::([^;\r\n]+))?;")
 FLAVOR_ATTRIBUTION_RE = re.compile(
     r"^(?P<body>.+[.!?])(?P<spacing>\s+)(?P<attribution>-\s*.+)$",
     flags=re.DOTALL,
@@ -57,6 +65,13 @@ FLAVOR_ATTRIBUTION_RE = re.compile(
 REGEX_META_RE = re.compile(r"([\\^$.*+?()[\]{}|/])")
 REGEX_SPECIAL_RE = re.compile(r"[\\()|[\]{}+*?^$.]")
 NUMBER_CAPTURE = r"([+-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?%?|\.\d+%?)"
+PERCENT_CAPTURE = (
+    r"([+-]?\d{1,3}(?:,\d{3})*(?:\.\d+)?%|\.\d+%)"
+)
+PARAGON_REQUIREMENT_VALUE_CAPTURE = (
+    r"(\[?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?"
+    r"\]?(?:%|x|\+)?)"
+)
 # ゲーム辞書の「|%x|」はMaxrollで「%[x]」と描画される場合がある。
 # 乗算種別マーカーまで数値アンカーに含め、全文置換後も装飾位置を維持する。
 D4_VALUE_CAPTURE = (
@@ -108,26 +123,77 @@ def _is_legendary_affix_file(file_name: str) -> bool:
     )
 
 
-def _is_paragon_name_row(row: CsvRow) -> bool:
+PARAGON_TOOLTIP_UI_FIELDS = {
+    "GlyphRadius_Prompt",
+    "NodeTypeMagic",
+    "NodeTypeRare",
+    "NodeTypeLegendary",
+    "GlyphLevel",
+    "AffectedNodes",
+    "GlyphSocket",
+    "GlyphRarity_Magic",
+    "GlyphRarity_Rare",
+    "GlyphRarity_Legendary",
+    "GlyphSizeName",
+    "GlyphRewardName",
+    "GlyphSocketed",
+    "ThresholdBonusAttribute",
+    "ThresholdBonusAttributeGlyphModified",
+    "RequirementsNotMet",
+    "RequirementListThresholdMetWithPlus",
+    "RequirementListThresholdNotMetWithPlus",
+    "ThresholdGlyphBonus",
+    "ThresholdRequirementsHeader",
+    "ThresholdRequirementsInRangeHeader",
+    "RequirementListThresholdMet",
+    "RequirementListThresholdNotMet",
+    "GlyphRadiusUpgrade",
+    "GlyphRadiusMax",
+    "RarityRequirement",
+    "LegendaryGlyphBonus",
+    "RequirementListThresholdNotMetInRange",
+    "RequirementListThresholdMetInRange",
+}
+
+
+def _is_paragon_row(row: CsvRow) -> bool:
+    if row.file_name.startswith(
+        ("Power_Paragon_", "Power_ParagonGlyph_")
+    ):
+        return (
+            row.key.lower() in {"name", "desc"}
+            or row.key.endswith(("_Name", "_Description"))
+        )
+    if row.file_name.startswith("ParagonGlyphAffix_"):
+        return row.key in {"Name", "name", "Desc", "desc"}
     if row.file_name.startswith(
         ("ParagonBoard_", "ParagonNode_", "ParagonGlyph_")
     ):
         return row.key in PARAGON_FIELDS
     if row.file_name == "ParagonBoardUI":
-        return row.key in {
-            "NodeTypeMagic",
-            "NodeTypeRare",
-            "NodeTypeLegendary",
-            "GlyphRarity_Magic",
-            "GlyphRarity_Rare",
-            "GlyphRarity_Legendary",
-        }
+        return row.key in PARAGON_TOOLTIP_UI_FIELDS
     if row.file_name == "ItemLabels":
         return row.key == "Glyph" and clean_color_tags(row.translation) == "Glyph"
     return (
         row.file_name == "UITestStrings"
         and row.key == "Common"
         and clean_color_tags(row.translation) == "Common Node"
+    )
+
+
+def _is_paragon_description_row(row: CsvRow) -> bool:
+    return (
+        row.file_name.startswith(
+            (
+                "Power_Paragon_",
+                "Power_ParagonGlyph_",
+                "ParagonGlyphAffix_",
+            )
+        )
+        and (
+            row.key.lower() == "desc"
+            or row.key.endswith("_Description")
+        )
     )
 
 
@@ -269,8 +335,8 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             "paragon",
             Rule(
                 "paragon",
-                "パラゴンボード、ノード種別、ノード、グリフの名前",
-                _is_paragon_name_row,
+                "パラゴンの名前、ノード・グリフ効果文、Tooltip共通文",
+                _is_paragon_row,
             ),
         ),
         (
@@ -393,6 +459,32 @@ def _escape_regex_text(value: str) -> str:
     )
 
 
+def _escape_d4_rendered_text(value: str) -> str:
+    """ゲームの単複数トークンをMaxrollの描画結果に合う正規表現へ変換する。"""
+    parts: list[str] = []
+    position = 0
+    for match in D4_PLURAL_TOKEN_RE.finditer(value):
+        parts.append(_escape_regex_text(value[position : match.start()]))
+        variants = [match.group(1)]
+        if match.group(2):
+            variants.append(match.group(2))
+        escaped_variants = [
+            _escape_regex_text(variant)
+            for variant in dict.fromkeys(variants)
+        ]
+        parts.append(f"(?:{'|'.join(escaped_variants)})")
+        position = match.end()
+    parts.append(_escape_regex_text(value[position:]))
+    return "".join(parts)
+
+
+def _render_japanese_plural_tokens(value: str) -> str:
+    return D4_PLURAL_TOKEN_RE.sub(
+        lambda match: match.group(2) or match.group(1),
+        value,
+    )
+
+
 def _token_id(token: str) -> str | None:
     match = PLACEHOLDER_RE.search(token)
     return match.group(0).upper() if match else None
@@ -411,7 +503,12 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
 
     for match in english_tokens:
         literal_before = english[position : match.start()]
-        pattern_parts.append(_escape_regex_text(literal_before))
+        literal_pattern = _escape_regex_text(literal_before)
+        # Maxrollはplaceholderをspanにし、直後の空白をDOMから落とすことがある。
+        # "Damageif requirements" のような連結表示も同じテンプレートで拾う。
+        if pattern_parts and literal_before[:1].isspace():
+            literal_pattern = re.sub(r"^\\s\+", r"\\s*", literal_pattern)
+        pattern_parts.append(literal_pattern)
         token = match.group(0)
         token_id = _token_id(token)
         if token_id is None:
@@ -431,7 +528,11 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
             pattern_parts.append(text_capture)
         position = match.end()
 
-    pattern_parts.append(_escape_regex_text(english[position:]))
+    trailing_literal = english[position:]
+    trailing_pattern = _escape_regex_text(trailing_literal)
+    if english_tokens and trailing_literal[:1].isspace():
+        trailing_pattern = re.sub(r"^\\s\+", r"\\s*", trailing_pattern)
+    pattern_parts.append(trailing_pattern)
     pattern = "".join(pattern_parts)
 
     replacement_parts: list[str] = []
@@ -472,14 +573,24 @@ def create_d4_description_pair(
     """
     english = D4_FORMAT_TAG_RE.sub("", english).strip()
     japanese = D4_FORMAT_TAG_RE.sub("", japanese).strip()
-    if not english or not japanese or "{" in english + japanese or "}" in english + japanese:
+    japanese = _render_japanese_plural_tokens(japanese)
+    text_without_value_tokens = D4_VALUE_TOKEN_RE.sub(
+        "",
+        english + japanese,
+    )
+    if (
+        not english
+        or not japanese
+        or "{" in text_without_value_tokens
+        or "}" in text_without_value_tokens
+    ):
         return None
 
     english_tokens = list(D4_VALUE_TOKEN_RE.finditer(english))
     if not english_tokens:
         if english == japanese:
             return None
-        pattern = _escape_regex_text(english)
+        pattern = _escape_d4_rendered_text(english)
         try:
             re.compile(pattern)
         except re.error:
@@ -490,11 +601,13 @@ def create_d4_description_pair(
     pattern_parts: list[str] = []
     position = 0
     for capture_number, match in enumerate(english_tokens, start=1):
-        pattern_parts.append(_escape_regex_text(english[position : match.start()]))
+        pattern_parts.append(
+            _escape_d4_rendered_text(english[position : match.start()])
+        )
         capture_by_token.setdefault(_d4_value_token_id(match.group(0)), capture_number)
         pattern_parts.append(D4_VALUE_CAPTURE)
         position = match.end()
-    pattern_parts.append(_escape_regex_text(english[position:]))
+    pattern_parts.append(_escape_d4_rendered_text(english[position:]))
 
     replacement_parts: list[str] = []
     position = 0
@@ -555,6 +668,98 @@ def create_d4_description_pairs(
             if line_pair and line_pair not in pairs:
                 pairs.append(line_pair)
     return pairs
+
+
+def create_paragon_tooltip_ui_pairs(
+    en_row: CsvRow, ja_row: CsvRow
+) -> list[tuple[str, str]]:
+    """公式UI辞書からMaxrollのグリフツールチップ表示用ルールを作る。"""
+    english = ICON_TAG_RE.sub("", clean_color_tags(en_row.translation)).strip()
+    japanese = ICON_TAG_RE.sub("", clean_color_tags(ja_row.translation)).strip()
+    pairs: list[tuple[str, str]] = []
+
+    # Maxrollはこの見出しと注記を別DOMへ分ける。全文規則にすると、同じ
+    # コンテナ内の要件値spanまで長文再配置の対象になるため、行単位だけにする。
+    if en_row.key == "ThresholdRequirementsInRangeHeader":
+        english_lines = [
+            line.strip() for line in english.splitlines() if line.strip()
+        ]
+        japanese_lines = [
+            line.strip() for line in japanese.splitlines() if line.strip()
+        ]
+        if len(english_lines) == len(japanese_lines):
+            for english_line, japanese_line in zip(
+                english_lines,
+                japanese_lines,
+            ):
+                line_pair = create_d4_description_pair(
+                    english_line,
+                    japanese_line,
+                )
+                if line_pair and line_pair not in pairs:
+                    pairs.append(line_pair)
+    else:
+        key, value, rejection = make_translation_pair(english, japanese)
+        if rejection is None:
+            pairs.append((key, value))
+
+    # Maxrollは公式の「Level {s1}」を「Level: 25」と表示する。
+    if en_row.key == "GlyphLevel" and "{s1}" in japanese.lower():
+        label = re.sub(r"\{s1\}", "", japanese, flags=re.IGNORECASE).strip()
+        if label:
+            pairs.append(
+                (
+                    rf"Level:\s*{D4_VALUE_CAPTURE}",
+                    f"{label}: $1",
+                )
+            )
+
+    # グリフソケットでは公式のボーナス文から条件だけを括弧内の別行にする。
+    if en_row.key in {
+        "ThresholdBonusAttribute",
+        "ThresholdBonusAttributeGlyphModified",
+    }:
+        english_condition = re.search(
+            r"\bif\s+requirements\s+met\b",
+            english,
+            flags=re.IGNORECASE,
+        )
+        japanese_prefix = re.split(
+            r"\{s1\}",
+            japanese,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0]
+        japanese_condition = re.sub(
+            r"^[^:：]+[:：]\s*",
+            "",
+            japanese_prefix,
+        ).strip(" \t、,")
+        if english_condition and japanese_condition:
+            template_pair = create_template_pair(english, japanese)
+            japanese_label = re.match(r"^[^:：]+[:：]", japanese)
+            if template_pair and japanese_label:
+                # Maxrollでは{s1}が「+4% Maximum Life」のような完成済み
+                # 効果文なので、「1つ追加」ではなく効果と条件をそのまま示す。
+                pairs = [
+                    pair for pair in pairs if pair[0] != template_pair[0]
+                ]
+                pairs.insert(
+                    0,
+                    (
+                        template_pair[0],
+                        f"{japanese_label.group(0)} $1"
+                        f"（{japanese_condition}）",
+                    ),
+                )
+            pairs.append(
+                (
+                    rf"\({_escape_regex_text(english_condition.group(0))}\)",
+                    f"（{japanese_condition}）",
+                )
+            )
+
+    return list(dict.fromkeys(pairs))
 
 
 def create_rune_tooltip_pairs(
@@ -724,6 +929,81 @@ def create_attribute_tooltip_pairs(
     return [(pattern, japanese_replacement)]
 
 
+def make_attribute_alias_pairs(
+    en_row: CsvRow,
+    ja_row: CsvRow,
+    key: str,
+    value: str,
+) -> list[tuple[str, str]]:
+    """Maxroll固有の属性値表記とパラゴン要件行を公式CSVから派生する。"""
+    pairs: list[tuple[str, str]] = []
+
+    # Maximum Lifeには同じ英語形で「最大ライフ」と「ライフ最大値の」の
+    # 2訳がある。パラゴンが使う百分率形式だけを限定し、公式の百分率訳を採る。
+    if en_row.key in {
+        "Hitpoints_Max_Percent_Bonus_Item",
+        "Hitpoints_Max_Percent_Bonus",
+    }:
+        english_token = D4_VALUE_TOKEN_RE.search(en_row.translation)
+        japanese_token = D4_VALUE_TOKEN_RE.search(ja_row.translation)
+        if english_token and japanese_token:
+            english_label = (
+                en_row.translation[: english_token.start()]
+                + en_row.translation[english_token.end() :]
+            ).strip()
+            japanese_replacement = (
+                ja_row.translation[: japanese_token.start()]
+                + "$1"
+                + ja_row.translation[japanese_token.end() :]
+            )
+            pairs.append(
+                (
+                    rf"{PERCENT_CAPTURE}\s*"
+                    rf"{_escape_regex_text(english_label)}",
+                    japanese_replacement,
+                )
+            )
+
+    # 条件付きノードのMaxroll表示は「必要値 / 現在値 Attribute」。
+    # ゲーム内表示の「現在値 / Attribute+必要値」へ並べ替える。
+    if en_row.key in {
+        "Strength",
+        "Intelligence",
+        "Willpower",
+        "Dexterity",
+    }:
+        english_token = D4_VALUE_TOKEN_RE.search(en_row.translation)
+        japanese_token = D4_VALUE_TOKEN_RE.search(ja_row.translation)
+        if english_token and japanese_token:
+            english_label = (
+                en_row.translation[: english_token.start()]
+                + en_row.translation[english_token.end() :]
+            ).strip()
+            japanese_label = (
+                ja_row.translation[: japanese_token.start()]
+                + ja_row.translation[japanese_token.end() :]
+            ).strip()
+            if english_label and japanese_label:
+                pairs.append(
+                    (
+                        rf"\+?{PARAGON_REQUIREMENT_VALUE_CAPTURE}\s*/\s*"
+                        rf"{PARAGON_REQUIREMENT_VALUE_CAPTURE}\s+"
+                        rf"{_escape_regex_text(english_label)}",
+                        f"$1 / {japanese_label}+$2",
+                    )
+                )
+                pairs.append(
+                    (
+                        rf"\+?{PARAGON_REQUIREMENT_VALUE_CAPTURE}\s*/\s*"
+                        rf"{_escape_regex_text(english_label)}\s*\+?"
+                        rf"{PARAGON_REQUIREMENT_VALUE_CAPTURE}",
+                        f"$1 / {japanese_label}+$2",
+                    )
+                )
+
+    return pairs
+
+
 def make_translation_pair(english: str, japanese: str) -> tuple[str, str, str | None]:
     """戻り値は (英語キー, 日本語値, 除外理由)。"""
     english = clean_color_tags(english)
@@ -851,13 +1131,31 @@ def merge_csv_files(
             if category == "attributes"
             else None
         )
-        if attribute_pairs is not None:
+        paragon_ui_pairs = (
+            create_paragon_tooltip_ui_pairs(en_row, ja_row)
+            if category == "paragon"
+            and en_row.file_name == "ParagonBoardUI"
+            else None
+        )
+        if paragon_ui_pairs is not None:
+            if not paragon_ui_pairs:
+                stats["rejected:unsupported-paragon-ui"] += 1
+                continue
+            pairs = paragon_ui_pairs
+            rejection = None
+        elif attribute_pairs is not None:
             if not attribute_pairs:
                 stats["rejected:unsupported-attribute"] += 1
                 continue
             pairs = attribute_pairs
             rejection = None
-        elif category in TOOLTIP_TEXT_CATEGORIES:
+        elif (
+            category in TOOLTIP_TEXT_CATEGORIES
+            or (
+                category == "paragon"
+                and _is_paragon_description_row(en_row)
+            )
+        ):
             effect_pairs = (
                 create_drop_source_pairs(en_row, ja_row)
                 if category == "drop-sources"
@@ -889,8 +1187,22 @@ def merge_csv_files(
         if (
             category not in TOOLTIP_TEXT_CATEGORIES
             and attribute_pairs is None
+            and paragon_ui_pairs is None
+            and not (
+                category == "paragon"
+                and _is_paragon_description_row(en_row)
+            )
         ):
             pairs = [(key, value)]
+            if category == "attributes":
+                pairs.extend(
+                    make_attribute_alias_pairs(
+                        en_row,
+                        ja_row,
+                        key,
+                        value,
+                    )
+                )
             if category == "affixes" and _is_legendary_affix_file(en_row.file_name):
                 pairs.extend(make_affix_alias_pairs(key, value))
 

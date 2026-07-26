@@ -147,6 +147,24 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             ),
             "paragon",
         )
+        for file_name, key in (
+            ("Power_Paragon_Spiritborn_Legendary_007", "desc"),
+            ("Power_ParagonGlyph_001", "desc"),
+            ("ParagonGlyphAffix_DamageBonus_Intelligence_Generic", "Desc"),
+            ("ParagonBoardUI", "ThresholdBonusAttribute"),
+            ("ParagonBoardUI", "RequirementsNotMet"),
+            ("ParagonBoardUI", "GlyphLevel"),
+            ("ParagonBoardUI", "GlyphSocketed"),
+            ("ParagonBoardUI", "GlyphSizeName"),
+            ("ParagonBoardUI", "GlyphRadiusUpgrade"),
+        ):
+            with self.subTest(file_name=file_name, key=key):
+                self.assertEqual(
+                    merge_tool.selected_category(
+                        row(file_name, key), merge_tool.DEFAULT_CATEGORIES
+                    ),
+                    "paragon",
+                )
         self.assertEqual(
             merge_tool.selected_category(
                 row("SkillTags", "Skill_Spirit_Forest_TagName"),
@@ -259,6 +277,67 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertEqual(match.group(2), "Counterattack")
         self.assertEqual(value, "$2+$1")
 
+    def test_maxroll_paragon_attribute_aliases_reorder_requirement_values(self):
+        def csv_row(key, translation):
+            return merge_tool.CsvRow(
+                ("4080", "AttributeDescriptions", "1", "1", key),
+                "AttributeDescriptions",
+                key,
+                translation,
+                2,
+            )
+
+        key, value, rejection = merge_tool.make_translation_pair(
+            "[{VALUE}|~|] Intelligence",
+            "知力[{VALUE}|~|]",
+        )
+        self.assertIsNone(rejection)
+        aliases = merge_tool.make_attribute_alias_pairs(
+            csv_row("Intelligence", "[{VALUE}|~|] Intelligence"),
+            csv_row("Intelligence", "知力[{VALUE}|~|]"),
+            key,
+            value,
+        )
+        requirement_pattern, requirement_replacement = aliases[0]
+        match = re.fullmatch(
+            requirement_pattern,
+            "+303 / 435 Intelligence",
+            flags=re.IGNORECASE,
+        )
+        self.assertIsNotNone(match)
+        self.assertEqual(match.groups(), ("303", "435"))
+        self.assertEqual(requirement_replacement, "$1 / 知力+$2")
+        glyph_pattern, glyph_replacement = aliases[1]
+        glyph_match = re.fullmatch(
+            glyph_pattern,
+            "+69 / Intelligence +25",
+            flags=re.IGNORECASE,
+        )
+        self.assertIsNotNone(glyph_match)
+        self.assertEqual(glyph_match.groups(), ("69", "25"))
+        self.assertEqual(glyph_replacement, "$1 / 知力+$2")
+
+        key, value, rejection = merge_tool.make_translation_pair(
+            "[{VALUE}*100|1%|] Maximum Life",
+            "ライフ最大値の[{VALUE}*100|1%|]",
+        )
+        self.assertIsNone(rejection)
+        aliases = merge_tool.make_attribute_alias_pairs(
+            csv_row(
+                "Hitpoints_Max_Percent_Bonus",
+                "[{VALUE}*100|1%|] Maximum Life",
+            ),
+            csv_row(
+                "Hitpoints_Max_Percent_Bonus",
+                "ライフ最大値の[{VALUE}*100|1%|]",
+            ),
+            key,
+            value,
+        )
+        max_life_pattern, max_life_replacement = aliases[0]
+        self.assertRegex("4.0% Maximum Life", max_life_pattern)
+        self.assertEqual(max_life_replacement, "ライフ最大値の$1")
+
     def test_corrupt_japanese_is_rejected(self):
         _, _, reason = merge_tool.make_translation_pair("Axe", "�")
         self.assertEqual(reason, "corrupt")
@@ -355,6 +434,86 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 r"\s+than\s+remaining\s+Life\s+are\s+Executed\.",
                 "残りのライフを上回る継続ダメージを受けた敵を処刑する。",
             ),
+        )
+
+    def test_paragon_raw_sf_values_and_plural_tokens_match_maxroll(self):
+        self.assertEqual(
+            merge_tool.D4_VALUE_TOKEN_RE.findall("{SF_4} for {SF_3}"),
+            ["{SF_4}", "{SF_3}"],
+        )
+        self.assertEqual(
+            merge_tool.D4_FORMAT_TAG_RE.sub(
+                "", "{c_number}{SF_4}{/c}"
+            ),
+            "{SF_4}",
+        )
+        prodigy_pair = merge_tool.create_d4_description_pair(
+            "Every {c_number}3rd{/c} consecutive Cast of the same "
+            "{c_important}Basic{/c} Skill increases all purchased Skills' "
+            "Ranks by {c_number}{SF_4}{/c} for "
+            "{c_number}{SF_3}{/c} seconds.",
+            "同じ{c_important}基本{/c}スキルの連続使用"
+            "{c_number}3回目{/c}ごとに、{c_number}{SF_3}{/c}秒間"
+            "すべての購入済みスキルのランクが"
+            "{c_number}{SF_4}{/c}上昇する。",
+        )
+        self.assertIsNotNone(prodigy_pair)
+        prodigy_pattern, prodigy_replacement = prodigy_pair
+        self.assertRegex(
+            "Every 3rd consecutive Cast of the same Basic Skill increases "
+            "all purchased Skills' Ranks by 5 for 5 seconds.",
+            prodigy_pattern,
+        )
+        self.assertEqual(
+            prodigy_replacement,
+            "同じ基本スキルの連続使用3回目ごとに、$2秒間"
+            "すべての購入済みスキルのランクが$1上昇する。",
+        )
+
+        drive_pair = merge_tool.create_d4_description_pair(
+            "Gain {c_number}[{SF_4}|+|]{/c} additional "
+            "{c_important}Evade{/c} |4Charge:Charges;. After moving "
+            "{c_number}[SF_3]{/c} meters, you deal "
+            "{c_number}[SF_2*100|1%x|]{/c} increased damage for "
+            "{c_number}[SF_1]{/c} seconds.",
+            "{c_important}回避{/c}のチャージを追加で"
+            "{c_number}[{SF_4}|+|]{/c}獲得する。"
+            "{c_number}[SF_3]{/c}メートル移動後に"
+            "{c_number}[SF_1]{/c}秒間ダメージが"
+            "{c_number}[SF_2*100|1%x|]{/c}増加する。",
+        )
+        self.assertIsNotNone(drive_pair)
+        drive_pattern, drive_replacement = drive_pair
+        self.assertRegex(
+            "Gain 1+ additional Evade Charge. After moving 10 meters, "
+            "you deal 6.0%x increased damage for 5 seconds.",
+            drive_pattern,
+        )
+        self.assertRegex(
+            "Gain 1+ additional Evade Charges. After moving 10 meters, "
+            "you deal 6.0%x increased damage for 5 seconds.",
+            drive_pattern,
+        )
+        self.assertEqual(
+            drive_replacement,
+            "回避のチャージを追加で$1獲得する。$2メートル移動後に"
+            "$4秒間ダメージが$3増加する。",
+        )
+
+    def test_template_allows_missing_space_after_maxroll_span(self):
+        pair = merge_tool.create_template_pair(
+            "Bonus: Another {s1} if requirements met:",
+            "ボーナス: 条件を満たしている場合、{s1}を1つ追加:",
+        )
+        self.assertIsNotNone(pair)
+        pattern, replacement = pair
+        self.assertRegex(
+            "Bonus: Another Elite Damageif requirements met:",
+            pattern,
+        )
+        self.assertEqual(
+            replacement,
+            "ボーナス: 条件を満たしている場合、$1を1つ追加:",
         )
 
     def test_multiline_effect_also_generates_rules_for_rendered_blocks(self):
@@ -760,6 +919,206 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 self.assertEqual(key, expected_key)
                 self.assertEqual(value, expected_value)
                 self.assertNotIn("{", key + value)
+
+    def test_paragon_tooltip_effects_and_ui_templates_are_generated(self):
+        rows_en = [
+            [
+                "1",
+                "Power_Paragon_Spiritborn_Legendary_007",
+                "1",
+                "10",
+                "desc",
+                "You deal bonus damage equal to "
+                "{c_number}[SF_1 * 100|1x%|]{/c} of all your bonuses to "
+                "Damage with Physical, Fire, Lightning, Cold, Poison, and "
+                "Shadow combined, up to "
+                "{c_number}[SF_0 * 100|x%|]{/c} total.",
+            ],
+            [
+                "2",
+                "ParagonBoardUI",
+                "70",
+                "11",
+                "ThresholdBonusAttribute",
+                "{c_label}Bonus:{/c} Another {s1} if requirements met:",
+            ],
+            [
+                "3",
+                "ParagonBoardUI",
+                "72",
+                "12",
+                "RequirementsNotMet",
+                "{c_red}Requirements not met{/c}",
+            ],
+        ]
+        rows_ja = [
+            [
+                "1",
+                "Power_Paragon_Spiritborn_Legendary_007",
+                "1",
+                "10",
+                "desc",
+                "物理、火炎、電撃、冷気、毒、シャドウダメージの全ボーナスの"
+                "合計の{c_number}[SF_1 * 100|1x%|]{/c}に等しいボーナス"
+                "ダメージを与える。最大量は合計"
+                "{c_number}[SF_0 * 100|x%|]{/c}。",
+            ],
+            [
+                "2",
+                "ParagonBoardUI",
+                "70",
+                "11",
+                "ThresholdBonusAttribute",
+                "{c_label}ボーナス:{/c} 条件を満たしている場合、"
+                "{s1}を1つ追加:",
+            ],
+            [
+                "3",
+                "ParagonBoardUI",
+                "72",
+                "12",
+                "RequirementsNotMet",
+                "{c_red}条件が満たされていません{/c}",
+            ],
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            en_path = root / "en.csv"
+            ja_path = root / "ja.csv"
+            for path, rows in ((en_path, rows_en), (ja_path, rows_ja)):
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    writer.writerows(rows)
+            merged, _ = merge_tool.merge_csv_files(
+                en_path, ja_path, {}, categories=("paragon",)
+            )
+
+        effect_pattern = next(
+            pattern
+            for pattern in merged
+            if pattern.startswith(r"You\s+deal\s+bonus\s+damage")
+        )
+        self.assertRegex(
+            "You deal bonus damage equal to 7.5% of all your bonuses to "
+            "Damage with Physical, Fire, Lightning, Cold, Poison, and "
+            "Shadow combined, up to 60% total.",
+            effect_pattern,
+        )
+        self.assertEqual(
+            merged[effect_pattern],
+            "物理、火炎、電撃、冷気、毒、シャドウダメージの全ボーナスの"
+            "合計の$1に等しいボーナスダメージを与える。最大量は合計$2。",
+        )
+        bonus_pattern = next(
+            pattern
+            for pattern in merged
+            if pattern.startswith(r"Bonus:\s+Another")
+        )
+        self.assertRegex(
+            "Bonus: Another +3.0% Resistance to All Elements "
+            "if requirements met:",
+            bonus_pattern,
+        )
+        self.assertEqual(
+            merged[bonus_pattern],
+            "ボーナス: $1（条件を満たしている場合）",
+        )
+        self.assertEqual(
+            merged["Requirements not met"],
+            "条件が満たされていません",
+        )
+
+    def test_paragon_glyph_socket_maxroll_variants_are_generated(self):
+        def csv_row(key, translation):
+            return merge_tool.CsvRow(
+                ("659576", "ParagonBoardUI", "1", "1", key),
+                "ParagonBoardUI",
+                key,
+                translation,
+                2,
+            )
+
+        cases = (
+            (
+                "GlyphSocketed",
+                "Socketed Glyph:",
+                "ソケットにはめ込んだグリフ:",
+                "SOCKETED Glyph:",
+                "ソケットにはめ込んだグリフ:",
+            ),
+            (
+                "GlyphLevel",
+                "Level {s1}",
+                "レベル{s1}",
+                "Level: 25",
+                "レベル: 25",
+            ),
+            (
+                "ThresholdBonusAttribute",
+                "{c_label}Bonus:{/c} Another {s1} if requirements met:",
+                "{c_label}ボーナス:{/c} 条件を満たしている場合、{s1}を1つ追加:",
+                "(if requirements met)",
+                "（条件を満たしている場合）",
+            ),
+            (
+                "ThresholdRequirementsInRangeHeader",
+                "{c_label}Requirements:{/c}\n"
+                "{c_lightgray}(purchased in radius range){/c}",
+                "{c_label}条件:{/c}\n"
+                "{c_lightgray}（範囲内で購入）{/c}",
+                "(purchased in radius range)",
+                "（範囲内で購入）",
+            ),
+            (
+                "RequirementListThresholdMetInRange",
+                "{icon:bullet, 1.4} {c_green}{s1}{/c} / {s2} "
+                "(purchased in range)",
+                "{icon:bullet, 1.4} {c_green}{s1}{/c} / {s2} "
+                "（範囲内で購入）",
+                "69 / +25 Intelligence (purchased in range)",
+                "69 / +25 Intelligence （範囲内で購入）",
+            ),
+        )
+
+        for key, english, japanese, rendered, expected in cases:
+            with self.subTest(key=key):
+                pairs = merge_tool.create_paragon_tooltip_ui_pairs(
+                    csv_row(key, english),
+                    csv_row(key, japanese),
+                )
+                matched = [
+                    re.sub(
+                        pattern,
+                        re.sub(r"\$(\d+)", r"\\\1", replacement),
+                        rendered,
+                        flags=re.IGNORECASE,
+                    )
+                    for pattern, replacement in pairs
+                    if re.search(pattern, rendered, flags=re.IGNORECASE)
+                ]
+                self.assertIn(expected, matched)
+
+        header_pairs = merge_tool.create_paragon_tooltip_ui_pairs(
+            csv_row(
+                "ThresholdRequirementsInRangeHeader",
+                "{c_label}Requirements:{/c}\n"
+                "{c_lightgray}(purchased in radius range){/c}",
+            ),
+            csv_row(
+                "ThresholdRequirementsInRangeHeader",
+                "{c_label}条件:{/c}\n"
+                "{c_lightgray}（範囲内で購入）{/c}",
+            ),
+        )
+        self.assertFalse(
+            any(
+                pattern.startswith(r"Requirements:\s+")
+                and "purchased" in pattern
+                for pattern, _ in header_pairs
+            )
+        )
 
     def test_existing_wins_and_ambiguous_new_key_is_skipped(self):
         with tempfile.TemporaryDirectory() as directory:

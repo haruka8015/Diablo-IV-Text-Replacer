@@ -20,6 +20,10 @@ const IGNORED_TEXT_TAGS = new Set([
 const DYNAMIC_VALUE_TEXT = /^\s*(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[x\]|%x|x%|%|x|\+)?)\s*$/;
 const SUPPLEMENTARY_VALUE_MARKER_TEXT =
   /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
+const PARAGON_CONDITIONAL_BONUS_TEXT =
+  /^\s*Bonus:\s*Another\b[\s\S]*\bif\s+requirements\s+met:?\s*$/i;
+const PARAGON_ATTRIBUTE_REQUIREMENT_TEXT =
+  /^\s*(?:[◆♦•·]\s*)?(?:Required(?:\s*\([^)]*\))?:\s*)?[+-]?\d[\d,.]*\s*\/[\s\S]*\b(?:Strength|Intelligence|Willpower|Dexterity)\b/i;
 const LONG_TEXT_TOOLTIP_SELECTOR =
   '.d4t-GameTooltip, .d4t-SkillTagTooltip';
 const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li';
@@ -154,12 +158,18 @@ chrome.storage.sync.get(
             sortedKeys.forEach(pattern => {
               const replacement = translationTable[pattern];
               
+              const paragonRequirementPattern =
+                pattern.includes('\\s*/\\s*') &&
+                /(?:Strength|Intelligence|Willpower|Dexterity)/i.test(pattern);
               const wholeSentence =
-                pattern.includes('\\s+') &&
+                paragonRequirementPattern ||
                 (
-                  pattern.includes('\\.') ||
-                  pattern.includes(':') ||
-                  pattern.length >= 80
+                  pattern.includes('\\s+') &&
+                  (
+                    pattern.includes('\\.') ||
+                    pattern.includes(':') ||
+                    pattern.length >= 80
+                  )
                 );
               const compiledPattern = {
                 regex: createTranslationRegex(pattern),
@@ -1067,6 +1077,63 @@ chrome.storage.sync.get(
         return false;
       }
 
+      // Maxrollの能力値要件は、現在値だけを緑・赤のspanにして
+      // 「+現在値 / 必要値 Attribute」と描画する。現在値はそのspanに残し、
+      // 「/ 能力値+必要値」を後続の通常色Textノードへ書く。
+      const isParagonAttributeRequirement =
+        Boolean(tooltipContainer) &&
+        PARAGON_ATTRIBUTE_REQUIREMENT_TEXT.test(originalText);
+      const requirementParts = isParagonAttributeRequirement
+        ? newText.match(
+            /^\s*([+-]?\d[\d,.]*(?:%|x|\+)?)([\s\S]*)$/
+          )
+        : null;
+      if (requirementParts) {
+        const currentValueNodeIndex = textNodes.findIndex(
+          textNode => DYNAMIC_VALUE_TEXT.test(textNode.nodeValue)
+        );
+        const plainTextNodeIndex = textNodes.findIndex(
+          (textNode, index) =>
+            index > currentValueNodeIndex &&
+            !DYNAMIC_VALUE_TEXT.test(textNode.nodeValue) &&
+            !isStyledTextNode(textNode)
+        );
+        if (currentValueNodeIndex >= 0 && plainTextNodeIndex >= 0) {
+          textNodes.forEach(textNode => {
+            textNode.nodeValue = '';
+          });
+          textNodes[currentValueNodeIndex].nodeValue = requirementParts[1];
+          textNodes[plainTextNodeIndex].nodeValue = requirementParts[2];
+          supplementaryRangeNodes.forEach(textNode => {
+            textNode.nodeValue = '';
+          });
+          return true;
+        }
+      }
+
+      // 条件付きボーナス文は複数spanをまたぐため、通常色のTextノードへ
+      // 変換済みの一文を集約する。数値spanを選ぶと色が行全体へ溢れるので、
+      // 動的数値ではないノードだけを出力先にする。
+      const isParagonConditionalBonus =
+        Boolean(tooltipContainer) &&
+        PARAGON_CONDITIONAL_BONUS_TEXT.test(originalText);
+      if (isParagonConditionalBonus) {
+        const plainTextNodeIndex = textNodes.findIndex(
+          textNode =>
+            !DYNAMIC_VALUE_TEXT.test(textNode.nodeValue) &&
+            !isStyledTextNode(textNode)
+        );
+        const outputNodeIndex =
+          plainTextNodeIndex >= 0 ? plainTextNodeIndex : 0;
+        textNodes.forEach((textNode, index) => {
+          textNode.nodeValue = index === outputNodeIndex ? newText : '';
+        });
+        supplementaryRangeNodes.forEach(textNode => {
+          textNode.nodeValue = '';
+        });
+        return true;
+      }
+
       textNodes.forEach((textNode, nodeIndex) => {
         const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT);
         let value = dynamicMatch?.[1] || null;
@@ -1083,6 +1150,16 @@ chrome.storage.sync.get(
         }
         requiredAnchorCount++;
         let valuePosition = newText.indexOf(value);
+        // Maxrollの条件値は色付きspan内で「+69」だが、ゲーム内日本語の
+        // 現在値は「69」と表示する。先頭+を除いた値でも同じspanをアンカーにする。
+        if (valuePosition < 0 && value.startsWith('+')) {
+          const unsignedValue = value.slice(1);
+          const unsignedPosition = newText.indexOf(unsignedValue);
+          if (unsignedPosition >= 0) {
+            value = unsignedValue;
+            valuePosition = unsignedPosition;
+          }
+        }
         while (
           valuePosition >= 0 &&
           occupiedAnchorRanges.some(range =>
@@ -1342,6 +1419,65 @@ chrome.storage.sync.get(
       flushRun();
     }
 
+    function normalizeParagonGlyphRequirement(element) {
+      if (
+        element.nodeType !== 1 ||
+        !element.closest(LONG_TEXT_TOOLTIP_SELECTOR)
+      ) {
+        return false;
+      }
+
+      // グリフソケットではMaxrollが現在値を別DOM枝の末尾へ置くため、
+      // 個別置換後に「/ 知力+25+69」の形になる。末尾の色付き現在値spanを
+      // 行頭へ移動し、ゲーム内と同じ「69 / 知力+25」へ正規化する。
+      const match = element.textContent.trim().match(
+        /^(?:[◆♦•·]\s*)?\/\s*(筋力|知力|意志力|敏捷性)\s*\+?([\d,.]+)\s*\+([\d,.]+)$/
+      );
+      if (!match) {
+        return false;
+      }
+
+      const [, attribute, requiredValue, currentValue] = match;
+      const textNodes = [];
+      collectInlineTextNodes(element, textNodes);
+      const currentValueNode = [...textNodes].reverse().find(
+        textNode =>
+          textNode.nodeValue.trim() === `+${currentValue}` ||
+          textNode.nodeValue.trim() === currentValue
+      );
+      if (!currentValueNode) {
+        return false;
+      }
+
+      function topLevelChild(textNode) {
+        let child = textNode;
+        while (child.parentNode && child.parentNode !== element) {
+          child = child.parentNode;
+        }
+        return child.parentNode === element ? child : null;
+      }
+
+      const currentValueRoot = topLevelChild(currentValueNode);
+      const firstTextRoot = textNodes.length
+        ? topLevelChild(textNodes[0])
+        : null;
+      if (!currentValueRoot || !firstTextRoot) {
+        return false;
+      }
+
+      textNodes.forEach(textNode => {
+        textNode.nodeValue = '';
+      });
+      currentValueNode.nodeValue = currentValue;
+      if (currentValueRoot !== firstTextRoot) {
+        element.insertBefore(currentValueRoot, firstTextRoot);
+      }
+      currentValueRoot.after(
+        document.createTextNode(` / ${attribute}+${requiredValue}`)
+      );
+      return true;
+    }
+
     function replaceText(node, regexTable, stats = {nodes: 0, attempts: 0, replacements: 0, chars: 0}) {
       // Maxroll解説本文は段落単位の専用処理で扱う。
       // 通常処理で複数spanを結合すると、色付き語句やTooltip要素の文字が
@@ -1384,6 +1520,7 @@ chrome.storage.sync.get(
               node
             );
             if (replaced) {
+              normalizeParagonGlyphRequirement(node);
               return stats;
             }
           }
@@ -1410,6 +1547,7 @@ chrome.storage.sync.get(
           }
           replaceTextNodeRun(textNodes, regexTable, stats);
         }
+        normalizeParagonGlyphRequirement(node);
       }
       return stats;
     }

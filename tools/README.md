@@ -38,6 +38,10 @@ python tools/merge_csv_translations.py output.json \
 数値込みの行単位で変換します。
 `drop-sources` はMaxrollのTooltip下部にあるドロップ元を対象に、
 `ModifiedLootDescriptions` のボス名とMaxroll固有の別名を登録します。
+`paragon` はボード・ノード・グリフ名に加え、`Power_Paragon_*`、
+`Power_ParagonGlyph_*`、`ParagonGlyphAffix_*` の効果文と、
+パラゴンTooltipのボーナス・要件テンプレート、グリフソケットの
+見出し・レベル・分割表示される条件注記を登録します。
 レシピ名も必要な場合は `recipes` を `--categories` に追加できます。
 `--list-categories` で内容を確認できます。既存訳を CSV で置き換える場合だけ
 `--overwrite-existing` を指定してください。

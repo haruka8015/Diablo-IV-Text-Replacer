@@ -206,9 +206,6 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn(
             "collectInlineTextNodes(child, supplementaryRangeNodes)", content
         )
-        self.assertNotIn(
-            "supplementaryRangeNodes.forEach(textNode =>", content
-        )
         self.assertIn("anchors.length === requiredAnchorCount", content)
 
     def test_full_tooltip_sentence_preserves_formatting_spans_as_anchors(self):
@@ -227,6 +224,54 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("fragment.appendChild(anchorRoots[index])", content)
         self.assertIn("containerNode.replaceChildren(fragment)", content)
         self.assertNotIn("textNode === outputNode ? newText : ''", content)
+
+    def test_conditional_paragon_lines_prioritize_correct_value_order(self):
+        content = self.source("content.js")
+        self.assertIn("PARAGON_CONDITIONAL_BONUS_TEXT", content)
+        self.assertIn("PARAGON_ATTRIBUTE_REQUIREMENT_TEXT", content)
+        self.assertIn("const isParagonAttributeRequirement =", content)
+        self.assertIn("const requirementParts =", content)
+        self.assertIn(
+            "textNodes[currentValueNodeIndex].nodeValue = requirementParts[1]",
+            content,
+        )
+        self.assertIn(
+            "textNodes[plainTextNodeIndex].nodeValue = requirementParts[2]",
+            content,
+        )
+        self.assertIn(
+            "supplementaryRangeNodes.forEach(textNode =>",
+            content,
+        )
+        self.assertIn(
+            "現在値はそのspanに残し",
+            content,
+        )
+        self.assertIn("const isParagonConditionalBonus =", content)
+        self.assertIn(
+            "!DYNAMIC_VALUE_TEXT.test(textNode.nodeValue)",
+            content,
+        )
+        self.assertIn("value.startsWith('+')", content)
+        self.assertIn("const unsignedValue = value.slice(1)", content)
+        self.assertIn("const paragonRequirementPattern =", content)
+        self.assertIn(
+            "paragonRequirementPattern ||",
+            content,
+        )
+        self.assertIn("function normalizeParagonGlyphRequirement(element)", content)
+        self.assertIn(
+            "document.createTextNode(` / ${attribute}+${requiredValue}`)",
+            content,
+        )
+        self.assertIn(
+            "element.insertBefore(currentValueRoot, firstTextRoot)",
+            content,
+        )
+        self.assertIn(
+            "normalizeParagonGlyphRequirement(node)",
+            content,
+        )
 
     def test_long_effect_rules_are_limited_to_game_tooltips(self):
         content = self.source("content.js")
@@ -385,6 +430,137 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertEqual(translations["Rare Glyph"], "レア・グリフ")
         self.assertEqual(
             translations["Legendary Glyph"], "レジェンダリー・グリフ"
+        )
+
+    def test_maxroll_paragon_tooltip_sentences_have_indexable_rules(self):
+        translations = json.loads(self.source("translations.json"))
+        legendary_pattern = next(
+            pattern
+            for pattern in translations
+            if pattern.startswith(r"You\s+deal\s+bonus\s+damage\s+equal")
+            and r"Current\s+Bonus" not in pattern
+        )
+        bonus_pattern = next(
+            pattern
+            for pattern in translations
+            if pattern.startswith(r"Bonus:\s+Another")
+        )
+        maximum_life_pattern = next(
+            pattern
+            for pattern in translations
+            if pattern.startswith(r"([+-]?\d")
+            and pattern.endswith(r"Maximum\s+Life")
+            and translations[pattern] == "ライフ最大値の$1"
+        )
+
+        legendary_text = (
+            "You deal bonus Damage equal to 7.5% of all your bonuses to "
+            "Damage with Physical, Fire, Lightning, Cold, Poison, and "
+            "Shadow combined, up to 60% total."
+        )
+        def javascript_sub(pattern, replacement, value):
+            python_replacement = re.sub(r"\$(\d+)", r"\\g<\1>", replacement)
+            return re.sub(
+                pattern,
+                python_replacement,
+                value,
+                flags=re.IGNORECASE,
+            )
+
+        self.assertEqual(
+            javascript_sub(
+                legendary_pattern,
+                translations[legendary_pattern],
+                legendary_text,
+            ),
+            "物理、火炎、電撃、冷気、毒、シャドウダメージの全ボーナスの"
+            "合計の7.5%に等しいボーナスダメージを与える。最大量は合計60%。",
+        )
+        self.assertEqual(
+            javascript_sub(
+                bonus_pattern,
+                translations[bonus_pattern],
+                "Bonus: Another +3.0% Resistance to All Elements "
+                "if Requirements Met:",
+            ),
+            "ボーナス: +3.0% Resistance to All Elements"
+            "（条件を満たしている場合）",
+        )
+        translated_bonus = javascript_sub(
+            bonus_pattern,
+            translations[bonus_pattern],
+            "Bonus: Another 4.0% Maximum Life if Requirements Met:",
+        )
+        self.assertEqual(
+            javascript_sub(
+                maximum_life_pattern,
+                translations[maximum_life_pattern],
+                translated_bonus,
+            ),
+            "ボーナス: ライフ最大値の4.0%（条件を満たしている場合）",
+        )
+        for (
+            english_attribute,
+            japanese_attribute,
+            source,
+            expected,
+        ) in (
+            ("Strength", "筋力", "+278 / 395 Strength", "278 / 筋力+395"),
+            (
+                "Intelligence",
+                "知力",
+                "+303 / 435 Intelligence",
+                "303 / 知力+435",
+            ),
+            ("Willpower", "意志力", "+25 / 69 Willpower", "25 / 意志力+69"),
+            (
+                "Dexterity",
+                "敏捷性",
+                "+2,111 / 2,065 Dexterity",
+                "2,111 / 敏捷性+2,065",
+            ),
+        ):
+            requirement_pattern = next(
+                pattern
+                for pattern in translations
+                if translations[pattern]
+                == f"$1 / {japanese_attribute}+$2"
+                and pattern.endswith(rf"\s+{english_attribute}")
+            )
+            self.assertEqual(
+                javascript_sub(
+                    requirement_pattern,
+                    translations[requirement_pattern],
+                    source,
+                ),
+                expected,
+            )
+            glyph_requirement_pattern = next(
+                pattern
+                for pattern in translations
+                if translations[pattern]
+                == f"$1 / {japanese_attribute}+$2"
+                and rf"\s*/\s*{english_attribute}" in pattern
+            )
+            self.assertEqual(
+                javascript_sub(
+                    glyph_requirement_pattern,
+                    translations[glyph_requirement_pattern],
+                    f"+69 / {english_attribute} +25",
+                ),
+                f"69 / {japanese_attribute}+25",
+            )
+        self.assertEqual(
+            javascript_sub(
+                maximum_life_pattern,
+                translations[maximum_life_pattern],
+                "4.0% Maximum Life",
+            ),
+            "ライフ最大値の4.0%",
+        )
+        self.assertEqual(
+            translations["Requirements not met"],
+            "条件が満たされていません",
         )
 
     def test_spiritborn_skill_categories_have_translations(self):
