@@ -334,11 +334,11 @@ class ExtensionStateTests(unittest.TestCase):
         content = self.source("content.js")
         self.assertIn("const wildcardCount = pattern =>", content)
         self.assertIn(
-            "const wildcardDifference = wildcardCount(a) - wildcardCount(b)",
+            "wildcardCount(leftPattern) - wildcardCount(rightPattern)",
             content,
         )
         self.assertIn(
-            "return wildcardDifference || b.length - a.length", content
+            "rightPattern.length - leftPattern.length", content
         )
 
     def test_straight_and_curly_apostrophes_both_match(self):
@@ -441,13 +441,60 @@ class ExtensionStateTests(unittest.TestCase):
             "pattern.sourcePattern.match(/^([A-Za-z0-9_]{2,})/)",
             content,
         )
+        self.assertIn("function findTopLevelLiteralWord(sourcePattern)", content)
         self.assertIn("const connectedRoots = new Set(", content)
         self.assertIn("connectedRoots.has(ancestor)", content)
         self.assertNotIn("other.contains(candidate)", content)
         self.assertIn("element?.closest?.('[hidden]')", content)
         self.assertIn("MAXROLL_INTERACTIVE_PARAGON_SELECTOR", content)
-        self.assertIn("mutation.attributeName === 'class'", content)
+        self.assertNotIn("'class', 'aria-selected'", content)
+        self.assertIn(
+            "attributeFilter: ['hidden', 'aria-selected', 'data-state', 'title']",
+            content,
+        )
         self.assertIn("!node.hidden", content)
+
+    def test_translation_runtime_has_bounded_memory_retention(self):
+        content = self.source("content.js")
+        offscreen = self.source("offscreen.js")
+        self.assertNotIn("let translationTable = {}", content)
+        self.assertNotIn("const regexTable = []", content)
+        self.assertIn("MAX_CACHED_TRANSLATION_REGEXES = 4096", content)
+        self.assertIn("function getTranslationRegex(pattern)", content)
+        self.assertIn("translationRegexCache.keys().next().value", content)
+        self.assertIn("translationsLoadPromise", content)
+        self.assertIn("MAX_PENDING_GUIDE_ROOTS = 256", content)
+        self.assertIn("!pendingRoot.isConnected", content)
+        self.assertIn("observer.takeRecords()", content)
+        self.assertIn("TRANSLATOR_IDLE_TIMEOUT_MS = 30_000", offscreen)
+        self.assertIn("translator?.destroy()", offscreen)
+
+    def test_maxroll_game_terms_do_not_wait_for_machine_translation(self):
+        content = self.source("content.js")
+        self.assertIn(
+            "function translateGuideSemanticElements(block, regexTable)",
+            content,
+        )
+        self.assertIn(
+            "block.querySelectorAll?.('[data-d4-id], .d4-tag')",
+            content,
+        )
+        self.assertIn(
+            "const guideBlocks = collectGuideBlocks(root, false)",
+            content,
+        )
+        self.assertIn(
+            "translateGuideSemanticElements(block, regexTable)",
+            content,
+        )
+        immediate_translation = content.index(
+            "guideBlocks.forEach(block => {\n"
+            "        translateGuideSemanticElements(block, regexTable);"
+        )
+        translator_queue = content.index(
+            "if (!guideTranslationEnabled || !('IntersectionObserver' in window))"
+        )
+        self.assertLess(immediate_translation, translator_queue)
 
     def test_maxroll_chrome_translation_skips_only_paragon_board_embed(self):
         content = self.source("content.js")

@@ -73,6 +73,8 @@ const MAXROLL_GUIDE_BLOCK_SELECTOR = [
 const GUIDE_TOKEN_PATTERN = /ZXQJ\d{4}QJQXZ/g;
 const GUIDE_TOKEN_PADDED_PATTERN = /\s*(ZXQJ\d{4}QJQXZ)\s*/g;
 const GUIDE_TRANSLATION_MAX_ATTEMPTS = 2;
+const MAX_PENDING_GUIDE_ROOTS = 256;
+const MAX_CACHED_TRANSLATION_REGEXES = 4096;
 
 // popup で状態が変わったら、開いているすべての対象タブへ即時反映する。
 // OFF時はリロードによって既に変換済みのDOMも元の表示へ戻す。
@@ -102,7 +104,6 @@ chrome.storage.sync.get(
   if (extensionEnabled) {
     if (D4DEBUG_DISPLAY) console.log('[D4T] Content script loaded'); // デバッグ用ログ
 
-    let translationTable = {};
     let dropSourceTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
@@ -110,6 +111,8 @@ chrome.storage.sync.get(
     let compiledWholeSentencePatternIndex = null;
     let activeRegexTable = null;
     let domObserverStarted = false;
+    let translationsLoadPromise = null;
+    const translationRegexCache = new Map();
 
     function createTranslationRegex(pattern) {
       // Maxroll側のタイポグラフィ変換でASCIIの'が’になる場合も照合する。
@@ -128,6 +131,25 @@ chrome.storage.sync.get(
       );
     }
 
+    function getTranslationRegex(pattern) {
+      const cached = translationRegexCache.get(pattern);
+      if (cached) {
+        // 挿入順を更新し、上限制キャッシュをLRUとして動作させる。
+        translationRegexCache.delete(pattern);
+        translationRegexCache.set(pattern, cached);
+        return cached;
+      }
+
+      const regex = createTranslationRegex(pattern);
+      translationRegexCache.set(pattern, regex);
+      if (translationRegexCache.size > MAX_CACHED_TRANSLATION_REGEXES) {
+        translationRegexCache.delete(
+          translationRegexCache.keys().next().value
+        );
+      }
+      return regex;
+    }
+
     function loadTranslations() {
       if (D4DEBUG_DISPLAY) console.log('[D4T] Loading translations...'); // デバッグ用ログ
       const url = chrome.runtime.getURL('translations.json');
@@ -139,8 +161,9 @@ chrome.storage.sync.get(
             return response.json();
           })
           .then(data => {
-            translationTable = {};
+            translationRegexCache.clear();
             dropSourceTranslations = new Map();
+            const translationEntries = [];
             Object.entries(data).forEach(([pattern, replacement]) => {
               if (pattern.startsWith(DROP_SOURCE_KEY_PREFIX)) {
                 const bossName = pattern.slice(DROP_SOURCE_KEY_PREFIX.length);
@@ -150,25 +173,29 @@ chrome.storage.sync.get(
                 );
                 return;
               }
-              translationTable[pattern] = replacement;
+              translationEntries.push([pattern, replacement]);
             });
 
-            // 事前コンパイルされた正規表現パターンの配列を初期化
+            // 正規表現のメタデータ配列を初期化（RegExp自体は必要時に生成）
             compiledPatterns = [];
             compiledWholeSentencePatterns = [];
 
             // キーの長さが長い順に並び替える（長いフレーズを優先的に処理）
             const wildcardCount = pattern =>
               (pattern.match(/\(\.\*\?\)/g) || []).length;
-            const sortedKeys = Object.keys(translationTable).sort((a, b) => {
-              const wildcardDifference = wildcardCount(a) - wildcardCount(b);
-              return wildcardDifference || b.length - a.length;
-            });
+            const sortedEntries = translationEntries.sort(
+              ([leftPattern], [rightPattern]) => {
+                const wildcardDifference =
+                  wildcardCount(leftPattern) - wildcardCount(rightPattern);
+                return (
+                  wildcardDifference ||
+                  rightPattern.length - leftPattern.length
+                );
+              }
+            );
 
             // すべてのパターンを事前にコンパイル
-            sortedKeys.forEach(pattern => {
-              const replacement = translationTable[pattern];
-              
+            sortedEntries.forEach(([pattern, replacement]) => {
               const paragonRequirementPattern =
                 pattern.includes('\\s*/\\s*') &&
                 /(?:Strength|Intelligence|Willpower|Dexterity)/i.test(pattern);
@@ -181,9 +208,10 @@ chrome.storage.sync.get(
                     pattern.includes(':') ||
                     pattern.length >= 80
                   )
-                );
+              );
               const compiledPattern = {
-                regex: createTranslationRegex(pattern),
+                // RegExpは元のパターン文字列より数倍多くメモリを使う場合がある。
+                // 現在のページに索引語が現れたルールだけをコンパイルする。
                 replacement,
                 wholeSentence,
                 sourcePattern: pattern,
@@ -218,14 +246,10 @@ chrome.storage.sync.get(
               });
             }
             
-            // 後方互換性のため、従来のregexTableも返す
-            const regexTable = [];
-            sortedKeys.forEach(pattern => {
-              const replacement = translationTable[pattern];
-              regexTable.push([createTranslationRegex(pattern), replacement]);
-            });
-            
-            return regexTable;
+            // 上の最適化済みテーブルだけを正規表現ルールの保持元にする。
+            // 呼び出し側との互換性を保ちつつ、完全なRegExpテーブルを
+            // もう一組保持しないようにする。
+            return compiledPatterns;
           });
     }
 
@@ -233,10 +257,62 @@ chrome.storage.sync.get(
       const byFirstWord = new Map();
       const unindexed = [];
 
+      function findTopLevelLiteralWord(sourcePattern) {
+        let groupDepth = 0;
+        let inCharacterClass = false;
+        let literalMatch = null;
+
+        for (let index = 0; index < sourcePattern.length; index++) {
+          const character = sourcePattern[index];
+          if (character === '\\') {
+            index++;
+            continue;
+          }
+          if (character === '[') {
+            inCharacterClass = true;
+            continue;
+          }
+          if (character === ']' && inCharacterClass) {
+            inCharacterClass = false;
+            continue;
+          }
+          if (inCharacterClass) {
+            continue;
+          }
+          if (character === '(') {
+            groupDepth++;
+            continue;
+          }
+          if (character === ')') {
+            groupDepth = Math.max(0, groupDepth - 1);
+            continue;
+          }
+          if (character === '|' && groupDepth === 0) {
+            // 最上位の選択肢では片側の単語が必ず現れるとは限らないため、
+            // このパターンは安全側の全件候補に残す。
+            return null;
+          }
+          if (groupDepth !== 0 || !/[A-Za-z0-9_]/.test(character)) {
+            continue;
+          }
+
+          const match = sourcePattern.slice(index).match(
+            /^([A-Za-z0-9_]{2,})/
+          );
+          if (match && !literalMatch) {
+            literalMatch = match;
+            index += match[1].length - 1;
+          }
+        }
+        return literalMatch;
+      }
+
       patterns.forEach(pattern => {
-        // 先頭の通常単語は、この正規表現が一致する際に必ず含まれる。
-        // 正規表現構文から始まるルールは安全側の全件候補に残す。
-        const match = pattern.sourcePattern.match(/^([A-Za-z0-9_]{2,})/);
+        // 先頭またはトップレベルの通常単語は、この正規表現が一致する際に
+        // 必ず含まれる。安全な必須語を抽出できない規則だけ全件候補に残す。
+        const match =
+          pattern.sourcePattern.match(/^([A-Za-z0-9_]{2,})/) ||
+          findTopLevelLiteralWord(pattern.sourcePattern);
         if (!match) {
           unindexed.push(pattern);
           return;
@@ -286,11 +362,11 @@ chrome.storage.sync.get(
         patternIndex
       );
 
-      for (
-        let {regex, replacement, minLength, wholeSentence} of candidates
-      ) {
+      for (const pattern of candidates) {
+        const {replacement, minLength, wholeSentence} = pattern;
         if (minLength <= textLength) {
           if (stats) stats.attempts++;
+          const regex = getTranslationRegex(pattern.sourcePattern);
           const newText = text.replace(regex, replacement);
           if (newText !== text) {
             text = newText;
@@ -512,6 +588,26 @@ chrome.storage.sync.get(
       });
     }
 
+    function translateGuideSemanticElements(block, regexTable) {
+      const semanticElements = [];
+      if (isD4SemanticElement(block)) {
+        semanticElements.push(block);
+      }
+      block.querySelectorAll?.('[data-d4-id], .d4-tag')
+        .forEach(element => semanticElements.push(element));
+
+      semanticElements.forEach(element => {
+        const originalLabel = element.textContent;
+        const translatedLabel = applyRegexTransformations(
+          originalLabel,
+          regexTable
+        );
+        if (translatedLabel !== originalLabel) {
+          setElementTextPreservingMarkup(element, translatedLabel);
+        }
+      });
+    }
+
     async function translateGuideTextNodesInPlace(block, regexTable) {
       const textNodes = [];
 
@@ -553,18 +649,7 @@ chrome.storage.sync.get(
       replacements.forEach(([textNode, value]) => {
         textNode.nodeValue = value;
       });
-      block.querySelectorAll(
-        '[data-d4-id], [class*="d4-"]'
-      ).forEach(element => {
-        if (!isD4SemanticElement(element)) {
-          return;
-        }
-        const label = applyRegexTransformations(
-          element.textContent,
-          regexTable
-        );
-        setElementTextPreservingMarkup(element, label);
-      });
+      translateGuideSemanticElements(block, regexTable);
       return replacements.length > 0;
     }
 
@@ -932,10 +1017,24 @@ chrome.storage.sync.get(
     }
 
     function queueMaxrollGuideTranslation(root, regexTable) {
-      if (!root) {
+      if (!root || (root.nodeType !== 9 && !root.isConnected)) {
         return;
       }
-      pendingGuideRoots.add(root);
+      const element = root.nodeType === 3 ? root.parentElement : root;
+      const queueRoot =
+        element?.closest?.(MAXROLL_GUIDE_BLOCK_SELECTOR) || root;
+
+      // オンデバイス翻訳の待機中もReactはガイド断片を頻繁に置き換える。
+      // 切断済みの部分木をこのキューから強参照し続けないようにする。
+      pendingGuideRoots.forEach(pendingRoot => {
+        if (pendingRoot.nodeType !== 9 && !pendingRoot.isConnected) {
+          pendingGuideRoots.delete(pendingRoot);
+        }
+      });
+      pendingGuideRoots.add(queueRoot);
+      while (pendingGuideRoots.size > MAX_PENDING_GUIDE_ROOTS) {
+        pendingGuideRoots.delete(pendingGuideRoots.values().next().value);
+      }
       if (guideTranslationQueued) {
         return;
       }
@@ -969,6 +1068,14 @@ chrome.storage.sync.get(
     }
 
     function observeMaxrollGuideBlocks(root, regexTable) {
+      const guideBlocks = collectGuideBlocks(root, false);
+
+      // ゲーム用語は辞書だけで確定できるため、解説文全体の機械翻訳を待たず
+      // 検出した全ブロックへ即時反映する。
+      guideBlocks.forEach(block => {
+        translateGuideSemanticElements(block, regexTable);
+      });
+
       if (!guideTranslationEnabled || !('IntersectionObserver' in window)) {
         queueMaxrollGuideTranslation(root, regexTable);
         return;
@@ -977,6 +1084,7 @@ chrome.storage.sync.get(
       function queueBlockIfNearViewport(block) {
         if (!block.isConnected) {
           pendingGuideViewportBlocks.delete(block);
+          guideIntersectionObserver?.unobserve(block);
           return true;
         }
         const record = guideBlockRecords.get(block);
@@ -1035,12 +1143,19 @@ chrome.storage.sync.get(
         }, {passive: true});
       }
 
-      collectGuideBlocks(root, false).forEach(block => {
+      guideBlocks.forEach(block => {
         if (queueBlockIfNearViewport(block)) {
           return;
         }
         pendingGuideViewportBlocks.add(block);
         guideIntersectionObserver.observe(block);
+      });
+
+      pendingGuideViewportBlocks.forEach(block => {
+        if (!block.isConnected) {
+          pendingGuideViewportBlocks.delete(block);
+          guideIntersectionObserver.unobserve(block);
+        }
       });
     }
 
@@ -1851,6 +1966,7 @@ chrome.storage.sync.get(
               replaceText(tooltipRoot, regexTable);
               replaceTitleAttributes(regexTable, undefined, tooltipRoot);
             });
+            observer.takeRecords();
           }, 0);
         }
         return Boolean(closestTooltip);
@@ -1892,6 +2008,8 @@ chrome.storage.sync.get(
             replaceTitleAttributes(regexTable, undefined, root);
             observeMaxrollGuideBlocks(root, regexTable);
           });
+          // 自身の同期的なDOM書き換えで発生したMutationRecordを破棄する。
+          observer.takeRecords();
         }, DEBOUNCE_DOM_DELAY_MS);
       }
 
@@ -1913,17 +2031,6 @@ chrome.storage.sync.get(
             // 英語へ書き戻すことがある。親要素から再評価して分割文も連結する。
             scheduleTranslation(mutation.target.parentElement);
           } else if (mutation.type === 'attributes') {
-            if (
-              mutation.attributeName === 'class' &&
-              mutation.target.closest?.(
-                MAXROLL_INTERACTIVE_PARAGON_SELECTOR
-              ) &&
-              !mutation.target.closest?.(LONG_TEXT_TOOLTIP_SELECTOR)
-            ) {
-              // パラゴンのホバー・移動・選択はclassだけを連続更新する。
-              // 翻訳対象の文字列は変わらないため、配下の再走査は不要。
-              return;
-            }
             // 非表示の Equipment / Stat Priority パネルが表示された場合や、
             // tooltip の title が後から設定された場合も対象にする。
             scheduleTranslation(mutation.target);
@@ -1936,7 +2043,10 @@ chrome.storage.sync.get(
         subtree: true,
         characterData: true,
         attributes: true,
-        attributeFilter: ['hidden', 'class', 'aria-selected', 'data-state', 'title']
+        // Maxrollはホバー、アニメーション、パラゴン盤面でclassを常時変更する。
+        // 追加ノードと表示状態を表す属性の監視だけで十分であり、すべてのclass
+        // 変更を監視すると、長時間開いたタブで再走査の負荷が増え続ける。
+        attributeFilter: ['hidden', 'aria-selected', 'data-state', 'title']
       });
       if (D4DEBUG_DISPLAY) console.log('[D4T] MutationObserver started'); // デバッグ用ログ
     }
@@ -1945,9 +2055,12 @@ chrome.storage.sync.get(
       if (!extensionEnabled) {
         return;
       }
+      if (activeRegexTable || translationsLoadPromise) {
+        return translationsLoadPromise || Promise.resolve();
+      }
       if (D4DEBUG_DISPLAY) console.log('[D4T] applyTranslations started'); // デバッグ用ログ
       const startTime = performance.now();
-      loadTranslations().then(regexTable => {
+      translationsLoadPromise = loadTranslations().then(regexTable => {
         if (!extensionEnabled) {
           return;
         }
@@ -1958,7 +2071,8 @@ chrome.storage.sync.get(
         const replaceEndTime = performance.now();
         const titleStats = replaceTitleAttributes(regexTable);
         const totalEndTime = performance.now();
-        const patternsCount = regexTable.length;
+        const patternsCount =
+          compiledPatterns.length + compiledWholeSentencePatterns.length;
         // console.log(`[D4T] Translation completed: Total ${(totalEndTime - startTime).toFixed(2)}ms, Text replacement ${(replaceEndTime - replaceStartTime).toFixed(2)}ms (${patternsCount} patterns × ${textStats.nodes} nodes = ${textStats.attempts} attempts, ${textStats.replacements} replacements, ${textStats.chars} chars), Title replacement ${(totalEndTime - replaceEndTime).toFixed(2)}ms (${titleStats.elements} elements, ${titleStats.replaced} replaced)`);
         observeDOM(regexTable);
         observeMaxrollGuideBlocks(document, regexTable);
@@ -1967,7 +2081,10 @@ chrome.storage.sync.get(
         if (D4DEBUG_DISPLAY) console.log('[D4T] Translations applied on page load'); // デバッグ用ログ
       }).catch(error => {
         console.error('[D4T] Error loading translations:', error);
+      }).finally(() => {
+        translationsLoadPromise = null;
       });
+      return translationsLoadPromise;
     }
 
     let debounceTimer;

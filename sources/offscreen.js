@@ -5,6 +5,23 @@ const TRANSLATOR_OPTIONS = {
 
 let translatorPromise = null;
 let translationQueue = Promise.resolve();
+let translatorIdleTimer = null;
+const TRANSLATOR_IDLE_TIMEOUT_MS = 30_000;
+
+function clearTranslatorIdleTimer() {
+  if (translatorIdleTimer) {
+    clearTimeout(translatorIdleTimer);
+    translatorIdleTimer = null;
+  }
+}
+
+function scheduleTranslatorRelease() {
+  clearTranslatorIdleTimer();
+  translatorIdleTimer = setTimeout(() => {
+    translatorIdleTimer = null;
+    releaseTranslator().catch(() => {});
+  }, TRANSLATOR_IDLE_TIMEOUT_MS);
+}
 
 async function getAvailability() {
   if (!('Translator' in self)) {
@@ -14,6 +31,7 @@ async function getAvailability() {
 }
 
 async function getTranslator() {
+  clearTranslatorIdleTimer();
   if (translatorPromise) {
     return translatorPromise;
   }
@@ -44,10 +62,12 @@ function enqueueTranslation(text) {
   });
 
   translationQueue = operation.catch(() => {});
+  operation.then(scheduleTranslatorRelease, scheduleTranslatorRelease);
   return operation;
 }
 
 function releaseTranslator() {
+  clearTranslatorIdleTimer();
   const operation = translationQueue.then(async () => {
     let translator = null;
     if (translatorPromise) {
