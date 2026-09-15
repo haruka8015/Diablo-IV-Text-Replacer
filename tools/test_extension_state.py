@@ -11,9 +11,9 @@ class ExtensionStateTests(unittest.TestCase):
     def source(self, name):
         return (SOURCES / name).read_text(encoding="utf-8")
 
-    def test_extension_version_tracks_season_14_third_release(self):
+    def test_extension_version_tracks_season_15_start(self):
         manifest = json.loads(self.source("manifest.json"))
-        self.assertEqual(manifest["version"], "1.14.2")
+        self.assertEqual(manifest["version"], "1.15.0")
 
     def test_update_does_not_force_extension_on_or_inject_twice(self):
         background = self.source("background.js")
