@@ -17,7 +17,7 @@ const IGNORED_TEXT_TAGS = new Set([
   'SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS',
   'IFRAME', 'OBJECT'
 ]);
-const DYNAMIC_VALUE_TEXT = /^\s*[\(（]?(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[x\]|%x|x%|%|x|\+)?)[\)）]?\s*$/;
+const DYNAMIC_VALUE_TEXT = /^\s*[\(（]?(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[(?:x|\+)\]|%x|x%|%|x|\+)?)[\)）]?\s*$/;
 const DYNAMIC_ORDINAL_TEXT = /^\s*(\d+)(?:st|nd|rd|th)\s*$/i;
 const SUPPLEMENTARY_VALUE_MARKER_TEXT =
   /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
@@ -113,6 +113,38 @@ chrome.storage.sync.get(
     let domObserverStarted = false;
     let translationsLoadPromise = null;
     const translationRegexCache = new Map();
+
+    function getWildcardCaptureIndexes(sourcePattern) {
+      const indexes = [];
+      let captureIndex = 0;
+      let inCharacterClass = false;
+      for (let index = 0; index < sourcePattern.length; index++) {
+        const character = sourcePattern[index];
+        if (character === '\\') { index++; continue; }
+        if (character === '[') { inCharacterClass = true; continue; }
+        if (character === ']') { inCharacterClass = false; continue; }
+        if (inCharacterClass || character !== '(') continue;
+        if (sourcePattern[index + 1] === '?') {
+          if (sourcePattern[index + 2] !== '<' || /[=!]/.test(sourcePattern[index + 3])) continue;
+        }
+        captureIndex++;
+        if (sourcePattern.startsWith('(.*?)', index)) indexes.push(captureIndex);
+      }
+      return indexes;
+    }
+
+    function hasUnsafeWildcardMatch(text, regex, captureIndexes) {
+      if (!captureIndexes.length) return false;
+      // 汎用の項目名キャプチャが別の文や翻訳済みテキストまで飲み込むと、
+      // 数値の移動・再変換が起きる。数値内の「4,375」は許容する。
+      regex.lastIndex = 0;
+      for (const match of text.matchAll(regex)) {
+        if (captureIndexes.some(index => /[\u3040-\u30ff\u3400-\u9fff]|[,;!?]\s|\.\s/.test(match[index] || ''))) {
+          return true;
+        }
+      }
+      return false;
+    }
 
     function createTranslationRegex(pattern) {
       // Maxroll側のタイポグラフィ変換でASCIIの'が’になる場合も照合する。
@@ -214,6 +246,8 @@ chrome.storage.sync.get(
                 // 現在のページに索引語が現れたルールだけをコンパイルする。
                 replacement,
                 wholeSentence,
+                wildcardCaptureIndexes: pattern.includes('(.*?)')
+                  ? getWildcardCaptureIndexes(pattern) : [],
                 sourcePattern: pattern,
                 order: 0,
                 // 正規表現キーの文字数は実際の表示文字数より長くなるため、
@@ -356,17 +390,40 @@ chrome.storage.sync.get(
       matchInfo
     ) {
       const textLength = text.length;
-      const candidates = selectCompiledPatterns(
+      let candidates = selectCompiledPatterns(
         text,
         patterns,
         patternIndex
       );
+
+      if (patterns === compiledWholeSentencePatterns) {
+        // 数値用の正規表現は長くても、実際には「3 seconds.」だけに
+        // 一致することがある。全文より先に末尾だけを翻訳しないよう、
+        // Tooltip候補は実際の一致長で比較する。汎用captureの優先順位は維持。
+        candidates = candidates.map(pattern => {
+          const regex = getTranslationRegex(pattern.sourcePattern);
+          regex.lastIndex = 0;
+          let matchedLength = 0;
+          for (const match of text.matchAll(regex)) {
+            matchedLength = Math.max(matchedLength, match[0].length);
+          }
+          return {pattern, matchedLength};
+        }).filter(candidate => candidate.matchedLength > 0).sort((left, right) =>
+          left.pattern.wildcardCaptureIndexes.length -
+            right.pattern.wildcardCaptureIndexes.length ||
+          right.matchedLength - left.matchedLength ||
+          left.pattern.order - right.pattern.order
+        ).map(candidate => candidate.pattern);
+      }
 
       for (const pattern of candidates) {
         const {replacement, minLength, wholeSentence} = pattern;
         if (minLength <= textLength) {
           if (stats) stats.attempts++;
           const regex = getTranslationRegex(pattern.sourcePattern);
+          if (hasUnsafeWildcardMatch(text, regex, pattern.wildcardCaptureIndexes)) {
+            continue;
+          }
           const newText = text.replace(regex, replacement);
           if (newText !== text) {
             text = newText;

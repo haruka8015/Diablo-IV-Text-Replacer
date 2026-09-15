@@ -1,5 +1,8 @@
 import csv
+import contextlib
 import importlib.util
+import io
+import json
 import re
 import sys
 import tempfile
@@ -16,6 +19,251 @@ SPEC.loader.exec_module(merge_tool)
 
 
 class MergeCsvTranslationsTests(unittest.TestCase):
+    def soul_splinter_fixture(self):
+        fixture = Path(__file__).parent / "fixtures"
+        return merge_tool.merge_csv_files(fixture / "s15_soul_splinters_en.csv",
+                                          fixture / "s15_soul_splinters_ja.csv", {})
+
+    def test_soul_splinter_names_and_flavors_are_selected(self):
+        merged, report = self.soul_splinter_fixture()
+        self.assertEqual(report["selected_by_category"]["items"], 35)
+        self.assertEqual(report["selected_by_category"]["flavors"], 35)
+        self.assertEqual(merged["Abyssal Splinter of the Mother"], "母の破片（深淵）")
+        self.assertEqual(merged["Abyssal Splinter of Sin"], "罪悪の破片（深淵）")
+        self.assertEqual(merged["Abyssal Splinter of Pain"], "苦痛の破片（深淵）")
+        self.assertGreaterEqual(report["counts"]["matched-ja-fallback"], 3)
+        raw = ('"Break the chains, and discover who you were meant to be. '
+               'Break the chains, and be beautiful in Sin."\n- Lilith, The Blessed Mother')
+        matches = [value for pattern, value in merged.items() if re.fullmatch(pattern, raw)]
+        self.assertEqual(matches, [
+            '「鎖を断ち切り、お前の真の姿を見つけよ。鎖を断ち切り、罪の中で美しくあれ」\n―祝福されし母リリス'])
+        self.assertTrue(any(re.fullmatch(pattern, "Can be inserted into equipment with sockets.")
+                            and value == "ソケット付きの装備にはめ込み可能。"
+                            for pattern, value in merged.items()))
+
+    def test_soul_splinter_stat_numbers_are_not_split(self):
+        merged, _ = self.soul_splinter_fixture()
+        for number in ("4375", "4,375", "437.5", "1750", "250"):
+            with self.subTest(number=number):
+                matches = [(re.fullmatch(pattern, f"+{number} Physical Resistance"), value)
+                           for pattern, value in merged.items()]
+                matches = [(match, value) for match, value in matches if match]
+                self.assertEqual(len(matches), 1)
+                match, value = matches[0]
+                self.assertEqual(match.groups(), (number,))
+                self.assertEqual(value, "物理耐性+$1")
+
+    def socketable_pair(self, name):
+        fixture = Path(__file__).parent / "fixtures"
+        en_rows, _ = merge_tool.load_csv(fixture / "s15_socketables_en.csv")
+        ja_rows, _ = merge_tool.load_csv(fixture / "s15_socketables_ja.csv")
+        row = next(row for row in en_rows.values() if row.key == "S15_Socketable_" + name)
+        return merge_tool.create_attribute_tooltip_pairs(row, ja_rows[row.identity])
+
+    def test_black_soulstone_matches_screenshot_and_preserves_values(self):
+        pairs = self.socketable_pair("BlackSoulstone")
+        self.assertEqual(len(pairs), 1)
+        pattern, replacement = pairs[0]
+        for damage in ("2.5%[x]", "1.5%", "[1.5 - 2.5]%[x]"):
+            with self.subTest(damage=damage):
+                text = (
+                    "Your kills absorb a soul for 10 seconds. Each soul increases "
+                    f"your damage by {damage} but increases your damage taken by 1%. "
+                    "This effect stacks up to 200 times, but does not refresh."
+                )
+                match = re.fullmatch(pattern, text)
+                self.assertIsNotNone(match)
+                self.assertEqual(match.groups(), ("10", damage, "1%", "200"))
+                translated = re.sub(r"\$(\d+)", lambda token: match.group(int(token[1])), replacement)
+                self.assertEqual(translated,
+                    "敵をキルした時に10秒間にわたり魂を吸収する。魂を吸収するごとに"
+                    f"与えるダメージが{damage}増加するが、受けるダメージも1%増加する。"
+                    "この効果は最大200回まで蓄積するが、効果時間はリセットされない。")
+
+    def test_socketable_skarn_reorders_numeric_references(self):
+        pattern, replacement = self.socketable_pair("Skarn")[0]
+        match = re.fullmatch(pattern,
+            "Killing an Elite Pack increases Monster Power by 2 and Experience gained by 30% for 60 seconds.")
+        self.assertIsNotNone(match)
+        self.assertEqual(match.groups(), ("2", "30%", "60"))
+        self.assertEqual(re.sub(r"\$(\d+)", lambda token: match.group(int(token[1])), replacement),
+            "エリートモンスターの群れを倒すと、60秒間にわたりモンスターパワーが2上昇し、獲得経験値量が30%増加する。")
+
+    def test_azmodan_known_bad_source_is_corrected_and_additive_marker_is_preserved(self):
+        pattern, replacement = self.socketable_pair("Azmodan")[0]
+        for life in ("50%[+]", "50%", "[25 - 50]%[+]"):
+            match = re.fullmatch(pattern,
+                f"You gain {life} Maximum Life, but your Maximum Primary Resource is reduced by 30%.")
+            self.assertIsNotNone(match)
+            self.assertEqual(match.groups(), (life, "30%"))
+            self.assertEqual(re.sub(r"\$(\d+)", lambda token: match.group(int(token[1])), replacement),
+                f"ライフ最大値が{life}増加するが、プライマリリソース最大値が30%減少する。")
+
+    def test_azmodan_correction_does_not_override_changed_sources(self):
+        from dataclasses import replace
+        fixture = Path(__file__).parent / "fixtures"
+        en, _ = merge_tool.load_csv(fixture / "s15_socketables_en.csv")
+        ja, _ = merge_tool.load_csv(fixture / "s15_socketables_ja.csv")
+        row = next(row for row in en.values() if row.key == "S15_Socketable_Azmodan")
+        self.assertEqual(merge_tool.create_attribute_tooltip_pairs(
+            replace(row, translation=row.translation.replace("Maximum Life", "Armor")), ja[row.identity]), [])
+        self.assertEqual(merge_tool.create_attribute_tooltip_pairs(
+            row, replace(ja[row.identity], translation=ja[row.identity].translation + "別の効果")), [])
+        corrected = replace(ja[row.identity], translation=(
+            '{c_unique}最大ライフ+[{VALUE2}|%+|]、最大リソースが'
+            '[PowerTag.S15_Socketable_Azmodan."Script Formula 1" * 100|%|]減少。{/c}'))
+        self.assertEqual(merge_tool.create_attribute_tooltip_pairs(row, corrected)[0][1],
+                         "最大ライフ+$1、最大リソースが$2減少。")
+
+    def test_socketable_import_has_only_numeric_capture_references(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_socketables_en.csv", fixture / "s15_socketables_ja.csv", {})
+        self.assertEqual(len(merged), 8)
+        self.assertEqual(report["added_by_category"], {"attributes": 8})
+        self.assertEqual(report["counts"].get("rejected:unsupported-attribute", 0), 0)
+        for pattern, value in merged.items():
+            self.assertNotIn("D4T_", pattern)
+            self.assertNotIn("PowerTag", pattern)
+            self.assertNotIn("{", value)
+            self.assertNotIn("}", value)
+            self.assertNotIn("(.*?)", pattern)
+            self.assertTrue(all(int(n) <= re.compile(pattern).groups
+                                for n in re.findall(r"\$(\d+)", value)))
+
+    def test_skill_tag_wins_over_random_item_name_in_either_csv_order(self):
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                rows = [("RareNameStrings_Suffix_Weapon_Bow", "Bow003", "鷲"),
+                        ("SkillTags", "Skill_Spirit_Sky_TagName", "イーグル")]
+                if reverse:
+                    rows.reverse()
+                for language in ("en", "ja"):
+                    with (root / (language + ".csv")).open("w", encoding="utf-8", newline="") as handle:
+                        writer = csv.writer(handle)
+                        writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                        for index, (file_name, key, value) in enumerate(rows):
+                            writer.writerow([str(index), file_name, "0", str(index), key,
+                                             "Eagle" if language == "en" else value])
+                merged, report = merge_tool.merge_csv_files(
+                    root / "en.csv", root / "ja.csv", {"Eagle": "以前の訳"}, overwrite_existing=True)
+                self.assertEqual(merged, {"Eagle": "イーグル"})
+                self.assertEqual(report["counts"]["skill-tag-preferred-over-rare-name"], 1)
+
+    def test_season_update_overwrites_existing_and_includes_item_flavor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = {"Enigma": "旧名", r"An\s+old\s+tale\.": "旧フレーバー",
+                        "Web-only label": "サイト専用"}
+            output = root / "translations.json"
+            output.write_text(json.dumps(existing), encoding="utf-8")
+            before = output.read_bytes()
+            rows = [
+                ("Item_Runeword_Enigma", "Name", "Enigma", "エニグマ"),
+                ("Item_Runeword_Enigma", "Flavor", "An old tale.", "新フレーバー"),
+                ("Item_Talisman_Charm_Set_Barb_01_01", "Flavor", "A set tale.", "セットの物語"),
+                ("Quest_Test", "Name", "Quest tale", "クエスト"),
+                ("Conv_Test", "Text", "NPC tale", "会話"),
+            ]
+            for language, column in (("en", 2), ("ja", 3)):
+                with (root / (language + ".csv")).open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    for index, row in enumerate(rows):
+                        writer.writerow([str(index), row[0], "0", str(index), row[1], row[column]])
+            report_path = root / "report.json"
+            args = [str(output), "--en", str(root / "en.csv"), "--ja", str(root / "ja.csv"),
+                    "--overwrite-existing", "--report", str(report_path)]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(merge_tool.main(args + ["--dry-run"]), 0)
+                self.assertEqual(output.read_bytes(), before)
+                self.assertEqual(merge_tool.main(args), 0)
+            result = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(result, {"Enigma": "エニグマ", r"An\s+old\s+tale\.": "新フレーバー",
+                                      r"A\s+set\s+tale\.": "セットの物語", "Web-only label": "サイト専用"})
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["counts"]["added"], 1)
+            self.assertEqual(report["counts"]["overwritten"], 2)
+            self.assertEqual(report["added_by_category"], {"flavors": 1})
+            self.assertEqual(report["overwritten_by_category"], {"items": 1, "flavors": 1})
+            self.assertEqual(len(report["overwritten_rules"]), 2)
+
+    def test_season_rule_comparison_separates_backlog_and_translation_changes(self):
+        result = merge_tool.compare_season_rules(
+            {"old": "旧", "changed": "以前", "removed": "削除"},
+            {"old": "旧", "changed": "現在", "new": "新", "covered": "登録済"},
+            {"changed": "手動訳", "covered": "登録済"},
+        )
+        self.assertEqual(result["new_rules_missing_from_dictionary"], 1)
+        self.assertEqual(result["previous_rules_missing_from_dictionary"], 1)
+        self.assertEqual(result["removed_rule_keys"], ["removed"])
+        self.assertEqual(result["changed_translations"], [
+            {"key": "changed", "previous": "以前", "current": "現在"}])
+
+    def test_gameplay_additions_exclude_story_and_enemy_skill_descriptions(self):
+        cases = [
+            ("Item_Runeword_Enigma", "Name", "items"),
+            ("Item_Talisman_Charm_Uniq_Generic_001", "Name", "items"),
+            ("Affix_Runeword_Grief", "Desc", "effects"),
+            ("Affix_Talisman_SetPower_Warlock04_01", "Desc", "effects"),
+            ("Affix_HellfireTorch_Barb_01", "Desc", "effects"),
+            ("Affix_x1_unique_Test", "Desc", "effects"),
+            ("Power_S15_TriadA_Player_FireStomp", "desc", "skills"),
+            ("Power_S15_Opal_Boss_OverrideSkill", "desc", None),
+            ("Conv_Test", "Name", None),
+            ("Quest_Test", "Name", None),
+            ("Item_Boots_Cosmetic_Test", "Name", None),
+        ]
+        for file_name, key, expected in cases:
+            with self.subTest(file_name=file_name):
+                row = merge_tool.CsvRow(("1", file_name, "0", "2", key),
+                                       file_name, key, "value", 2)
+                self.assertEqual(merge_tool.selected_category(
+                    row, merge_tool.DEFAULT_CATEGORIES), expected)
+
+    def test_item_index_fallback_requires_unique_rows_in_both_languages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def write(language, indexes, text):
+                path = root / (language + ".csv")
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    for index in indexes:
+                        writer.writerow(["1", "Item_Runeword_Enigma", index,
+                                         "2", "Name", text])
+                return path
+            for en_indexes, ja_indexes, expected in [
+                ([0], [1], {"Enigma": "謎"}),
+                ([0, 2], [1], {}),
+                ([0], [1, 2], {}),
+            ]:
+                with self.subTest(en=en_indexes, ja=ja_indexes):
+                    merged, _ = merge_tool.merge_csv_files(
+                        write("en", en_indexes, "Enigma"),
+                        write("ja", ja_indexes, "謎"), {})
+                    self.assertEqual(merged, expected)
+
+    def test_new_equipment_effects_preserve_numeric_captures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for language, value in [
+                ("en", "Gain [Affix_Value_1*100|%|] Armor."),
+                ("ja", "防御力が[Affix_Value_1*100|%|]増加する。"),
+            ]:
+                with (root / (language + ".csv")).open(
+                    "w", encoding="utf-8", newline=""
+                ) as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    writer.writerow(["1", "Affix_Runeword_Grief", "0", "2", "Desc", value])
+            merged, report = merge_tool.merge_csv_files(root / "en.csv", root / "ja.csv", {})
+            pattern = next(key for key in merged if re.fullmatch(key, "Gain 25% Armor."))
+            self.assertEqual(re.fullmatch(pattern, "Gain 25% Armor.").group(1), "25%")
+            self.assertEqual(merged[pattern], "防御力が$1増加する。")
+            self.assertEqual(report["added_rules"][0]["category"], "effects")
+
     def test_load_csv_joins_blizzard_continuation_rows(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sample.csv"
@@ -937,6 +1185,26 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertRegex("(6 times)", pattern)
         self.assertRegex("(1 time)", pattern)
         self.assertEqual(replacement, "（これを$1回行う）")
+
+    def test_mot_description_preserves_shadow_count_and_renders_plural(self):
+        def row(text):
+            return merge_tool.CsvRow(
+                ("2089934", "Item_Rune_Effect_Rogue_DarkShroud", "0", "3679068894", "RuneDescription"),
+                "Item_Rune_Effect_Rogue_DarkShroud", "RuneDescription", text, 1,
+            )
+
+        pairs = merge_tool.create_rune_tooltip_pairs(
+            row("{c_RuneEffect}Gain {c_number}{s1}{/c} |4 shadow:shadows;, from the Rogue's {c_important}Dark Shroud{/c} Skill, reducing damage taken per shadow.{/c}"),
+            row("{c_RuneEffect}ローグのスキル{c_important}〈ダークシュラウド〉{/c}の影を{c_number}{s1}{/c}個獲得し、影1つごとに受けるダメージを減少させる。{/c}"),
+        )
+        for count, noun in [("1", "shadow"), ("2", "shadows"), ("5", "shadows")]:
+            text = f"Gain {count} {noun}, from the Rogue's Dark Shroud Skill, reducing damage taken per shadow."
+            matches = [(re.fullmatch(key, text), value) for key, value in pairs]
+            matches = [(match, value) for match, value in matches if match]
+            self.assertTrue(matches)
+            for match, value in matches:
+                self.assertEqual(match.groups(), (count,))
+                self.assertEqual(value, "ローグのスキル〈ダークシュラウド〉の影を$1個獲得し、影1つごとに受けるダメージを減少させる。")
 
     def test_evade_cooldown_attribute_expands_plural_control_text(self):
         def csv_row(translation):

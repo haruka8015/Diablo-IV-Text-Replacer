@@ -4,8 +4,10 @@
 
 ## シーズン更新の手順
 
-シーズン番号やファイル名はコードに固定していません。同じ6列の TSV なら、
-次シーズンもツールの修正なしで利用できます。以下は S16 の例です。
+同じ6列の TSV なら既存ツールで CSV に変換できます。ただし、新しいアイテム系列や
+説明文の形式は辞書生成の対象追加が必要な場合があります。
+差分調査・取り込み漏れ確認・検証は [シーズン更新手順](season-update.md) を参照してください。
+以下は S16 の例です。
 
 ### 1. 手作業：D4Analyzer から TSV を保存する
 
@@ -25,9 +27,9 @@ dry-run で追加件数・除外・競合を確認し、問題がなければ辞
 
 ```bash
 python tools/convert_tsv_to_csv.py tmp/S16
-python tools/merge_csv_translations.py --en tmp/S16/en.csv --ja tmp/S16/ja.csv --dry-run
+python tools/merge_csv_translations.py --en tmp/S16/en.csv --ja tmp/S16/ja.csv --overwrite-existing --dry-run
 # dry-run の確認後に実行
-python tools/merge_csv_translations.py --en tmp/S16/en.csv --ja tmp/S16/ja.csv
+python tools/merge_csv_translations.py --en tmp/S16/en.csv --ja tmp/S16/ja.csv --overwrite-existing
 ```
 
 以後は `S16` を対象シーズンのフォルダー名に置き換えます。CSV がすでにある場合は
@@ -65,6 +67,36 @@ python tools/convert_tsv_to_csv.py tmp/S15
 
 ## merge_csv_translations.py
 
+### 攻略用のシーズン比較（辞書を更新せず確認）
+
+```powershell
+python tools/merge_csv_translations.py --en tmp/S15/en.csv --ja tmp/S15/ja.csv --previous-en tmp/S14/en.csv --previous-ja tmp/S14/ja.csv --overwrite-existing --dry-run --report tmp/S15/season-update-report.json
+```
+
+- ゲームアイテムのフレーバーテキストも取り込みます。NPC会話・クエスト本文は対象外です。
+- シーズン更新では `--overwrite-existing` を指定し、生成できた同一キーの訳を
+  最新CSVで更新します。英文が変わった場合は新しい英文に対応するルールを追加します。
+  CSVから生成されないサイト専用ルール等は保持します。
+  この指定を省略した場合は追加のみで、既存訳の更新にはなりません。
+- ルーンワード装備名、ユニークチャーム名、ルーンワード・チャーム・セット・
+  Hellfire Torch の効果文、および `Power_S<番号>_Triad[A-C]_Player_*` の
+  プレイヤー能力説明にも対応します。ボス能力の説明はこの指定では追加しません。
+- 英日で `Index` が違う場合は、残る4項目が両言語で一意な場合だけ対応付けます。
+- スキルタグと装備のランダム名断片で同じ英語の訳が異なる場合は、スキルタグを優先します。
+  例: `Eagle` はランダム名用の「鷲」ではなく、スキル分類の「イーグル」を採用します。
+- `--previous-en` / `--previous-ja` は必ず両方指定します。同じカテゴリ・変換処理で
+  両シーズンのルールを生成し、新しいキーと、以前からある未登録キーを分けます。
+  件数は重複排除後の正規表現ルール数です。新規アイテム数ではありません。
+  既存効果文の英文変更や、CSVの対応付け改善も新しいキーに含まれます。
+- レポートの `added_rules` は追加候補、`overwritten_rules` は更新前後の訳とカテゴリ、
+  `existing_value_differences` は既存訳との差、`season_comparison` は旧シーズンとの比較です。
+  追加・上書き件数を別々に表示します。旧シーズンのみのキーは自動削除しません。
+  同じ英文の訳が競合する名前や、対応付け・ルール生成できない行は引き続き除外されます。
+- `--dry-run` では辞書は変更せず、`--report` の指定先だけを書き込みます。
+  取り込み時は上のコマンドから `--dry-run` を外します。
+- ローカルCSVによる候補生成のため、Maxrollの実DOM・実際の掲載範囲への一致は
+  別途確認が必要です。
+
 `SNO,FileName,Index,KeyHash,Key,Translation` 形式の英語・日本語 CSV を
 複合キーで対応付け、`sources/translations.json` に追加します。既存訳は維持され、
 文字化けした日本語、対応のない行、同じ英語に対する競合訳は自動的に除外されます。
@@ -88,7 +120,18 @@ python tools/merge_csv_translations.py output.json \
 `attributes,drop-sources,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,flavors,rare-names,powers,paragon,skill-tags,skills` です。
 `effects` はレジェンダリー、ユニーク、ミシック効果の説明文からゲーム内の
 装飾タグを除去し、Maxroll が表示する可変数値を正規表現に変換します。
-`flavors` はユニーク、ミシック装備のフレーバーテキストを変換します。
+`attributes` の `S<番号>_Socketable_*` はソウルストーン系の長文効果として処理します。
+`{VALUE2}` と `PowerTag` の数値式が混在していても参照を対応付け、割合・`%[x]`・`%[+]`・
+数値範囲を保持します。英日で参照先が異なる効果は除外します。
+S15 CSVの `S15_Socketable_Azmodan` は日本語側がAndarielの文になっているため、
+確認済みの英日原文が両方一致する場合のみ、英文に基づく補正訳を生成します。
+原文が修正・変更された場合はこの補正を適用しません。入力CSV自体は変更しません。
+`flavors` は攻略用アイテムのフレーバーテキストを変換します。
+ユニーク・ミシック・レジェンダリーに加え、セットチャームやルーンワード装備も含みます。
+`Item_S<番号>_SoulSplinter_*` の魂の破片は、正式名を `items`、フレーバーを `flavors`、
+基礎ステータス・使用条件を `attributes` として取り込みます。装着説明
+`UIToolTips.Socketable` も対象です。基礎ステータスは `4375` / `4,375` / `437.5` の
+いずれも一つの数値として保持します。Maxroll独自の短縮ラベルは正式名とは別の表記です。
 `skill-tags` は `SkillTags` のタグ名と注釈本文を変換します。長い注釈ルールは
 装備Tooltip内だけで照合されます。
 `skills` はクラススキル名に加え、`Power_<クラス名>_*` の基本説明・強化説明を
@@ -97,6 +140,10 @@ Maxroll のスキルTooltip向け全文ルールへ変換します。`{payload:.
 `{if:...}{else}...{/if}` は実際に表示される各分岐のルールへ展開します。
 `runes` はルーン名、ルーンワード名、条件・効果・オーバーフロー説明を変換し、
 英語・日本語CSV間のIndex差も吸収します。
+ルーン効果の `{s1}` は数値として保持し、`|4 shadow:shadows;` のような
+単複数指定は表示される英語に展開します。Tooltipの全文照合では、汎用
+キャプチャの少なさを優先した上で実際の一致長を比較し、数値用正規表現の
+長さだけで「3 seconds.」などの短い断片が全文より先に置換されるのを防ぎます。
 `tooltip-labels` はアイテムパワー、品質、祖霊・レジェンダリーなどの装備Tooltip
 共通ラベルを変換します。
 `weapon-tooltip` は秒間ダメージ、命中ごとのダメージ、秒間攻撃回数と速度区分を
@@ -112,6 +159,13 @@ Maxroll のスキルTooltip向け全文ルールへ変換します。`{payload:.
 `--overwrite-existing` を指定してください。
 
 ## 現在使用中のツール
+
+## Tooltipの汎用ルール検証
+
+`node tools/test_content_wildcards.js` で実際の `content.js` の文字列置換処理を検証できます。
+数値保持、`%[+]`、繰り返し実行、汎用キャプチャが別の文や翻訳済み日本語を
+巻き込まないことを確認します。Node.jsは任意で、拡張の実行には不要です。
+DOMの実表示を保証するテストではありません。
 
 ## convert_stringlist_to_translations.py
 

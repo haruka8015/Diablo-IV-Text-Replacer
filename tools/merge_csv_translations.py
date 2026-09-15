@@ -132,11 +132,18 @@ class Rule:
     matches: Callable[[CsvRow], bool]
 
 
+def _is_soul_splinter_file(file_name: str) -> bool:
+    return bool(re.match(r"^Item_S\d+_SoulSplinter_", file_name))
+
+
 def _is_legacy_item_file(file_name: str) -> bool:
+    if _is_soul_splinter_file(file_name):
+        return True
     if file_name.startswith("ItemType_"):
         return True
     if file_name.startswith(
-        ("Item_Talisman_Charm_Set_", "Item_Talisman_Seal_")
+        ("Item_Talisman_Charm_Set_", "Item_Talisman_Charm_Uniq_",
+         "Item_Talisman_Seal_", "Item_Runeword_")
     ):
         return True
     if not file_name.startswith("Item_"):
@@ -239,7 +246,12 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             Rule(
                 "attributes",
                 "AttributeDescriptions の装備・能力値表記",
-                lambda row: row.file_name == "AttributeDescriptions",
+                lambda row: (
+                    row.file_name == "AttributeDescriptions"
+                    or (_is_soul_splinter_file(row.file_name)
+                        and row.key in {"Description", "RequirementText"})
+                    or (row.file_name == "UIToolTips" and row.key == "Socketable")
+                ),
             ),
         ),
         (
@@ -326,9 +338,13 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                 lambda row: row.key == "Desc"
                 and row.file_name.startswith("Affix_")
                 and (
-                    "_Unique_" in row.file_name
+                    "_unique_" in row.file_name.lower()
                     or "legendary" in row.file_name.lower()
                     or "mythic" in row.file_name.lower()
+                    or row.file_name.startswith((
+                        "Affix_Runeword_", "Affix_Talisman_SetPower_",
+                        "Affix_Talisman_Charm_", "Affix_HellfireTorch_",
+                    ))
                 ),
             ),
         ),
@@ -336,11 +352,11 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             "flavors",
             Rule(
                 "flavors",
-                "ユニーク、ミシック装備のフレーバーテキスト",
+                "攻略用アイテムのフレーバーテキスト（セット・ルーンワードを含む）",
                 lambda row: row.key == "Flavor"
                 and row.file_name.startswith("Item_")
                 and (
-                    "_Unique" in row.file_name
+                    _is_legacy_item_file(row.file_name)
                     or "_Mythic" in row.file_name
                 ),
             ),
@@ -391,7 +407,8 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                     row.file_name.startswith(("Skill_", "SkillTree_"))
                     or row.file_name == "SkillTagNames"
                     or (
-                        row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES)
+                        (row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES)
+                         or bool(re.match(r"^Power_S\d+_Triad[A-C]_Player_", row.file_name)))
                         and (
                             row.key.lower() in {"desc", "rankup_desc"}
                             or row.key.endswith("_Description")
@@ -899,6 +916,28 @@ def create_rune_tooltip_pairs(
         en_row.translation,
         ja_row.translation,
     )
+    if en_row.key == "RuneDescription":
+        # ルーン効果の{s1}は影の数などの実数値。数値用の経路で
+        # 単複数指定も展開し、内部表記をそのまま照合しない。
+        def numeric_rune_values(text: str) -> str:
+            text = D4_PLURAL_TOKEN_RE.sub(
+                lambda match: "|4" + match.group(1).strip() + ":"
+                + (match.group(2) or match.group(1)).strip() + ";",
+                text,
+            )
+            return re.sub(
+                r"\{s(\d+)\}",
+                lambda match: f"[D4T_RUNE_VALUE_{match.group(1)}]",
+                text,
+                flags=re.IGNORECASE,
+            )
+
+        rendered_pair = create_d4_description_pair(
+            numeric_rune_values(en_row.translation),
+            numeric_rune_values(ja_row.translation),
+        )
+        if rendered_pair and rendered_pair not in pairs:
+            pairs.insert(0, rendered_pair)
     if en_row.key != "Name":
         return pairs
 
@@ -1009,6 +1048,59 @@ def create_attribute_tooltip_pairs(
     en_row: CsvRow, ja_row: CsvRow
 ) -> list[tuple[str, str]] | None:
     """Maxrollの描画時に展開されるAttributeDescriptionsの制御記法を処理する。"""
+    if _is_soul_splinter_file(en_row.file_name):
+        english = clean_color_tags(en_row.translation)
+        japanese = clean_color_tags(ja_row.translation)
+        en_stat = re.fullmatch(r"\+(\d+(?:,\d{3})*(?:\.\d+)?)\s+(.+)", english)
+        ja_stat = re.fullmatch(r"(.+)\+(\d+(?:,\d{3})*(?:\.\d+)?)", japanese)
+        if en_stat:
+            if not ja_stat or en_stat[1].replace(',', '') != ja_stat[2].replace(',', ''):
+                return []
+            # 4375と4,375の両方を一つの数値として扱う。サイトの値倍率にも追従する。
+            return [(r"\+(\d+(?:,\d{3})*(?:\.\d+)?)\s+" + _escape_regex_text(en_stat[2]),
+                     ja_stat[1] + "+$1")]
+        return create_d4_description_pairs(english, japanese)
+    if en_row.file_name == "UIToolTips" and en_row.key == "Socketable":
+        return create_d4_description_pairs(en_row.translation, ja_row.translation)
+    if re.fullmatch(r"S\d+_Socketable_\w+", en_row.key):
+        # VALUEとPowerTag式が混在する長文。VALUEを安定した数値参照に
+        # 正規化し、一般属性の長さ制限を通さず装備効果用の生成処理へ渡す。
+        # 名前付き参照の照合は維持し、英日で別の効果を指す場合は除外する。
+        def normalize_values(text: str) -> str:
+            return TEMPLATE_TOKEN_RE.sub(
+                lambda match: "[D4T_" + (_token_id(match.group(0)) or "").strip("{}") + "]",
+                text,
+            )
+
+        english = normalize_values(en_row.translation)
+        japanese = normalize_values(ja_row.translation)
+        # S15の提供CSVではAzmodanの日本語にAndarielの効果が誤収録されている。
+        # 確認済みの英日原文が両方一致する場合だけ、英文に基づく補正訳を使う。
+        # 将来修正された日本語や別効果へ変更された英文には適用しない。
+        expected_english = (
+            'You gain [D4T_VALUE2] Maximum Life, but your Maximum Primary Resource '
+            'is reduced by [PowerTag.S15_Socketable_Azmodan."Script Formula 1" * 100|%|].'
+        )
+        broken_japanese = (
+            '攻撃速度とクリティカルヒット率が[D4T_VALUE2]上昇するが、プライマリリソースコストが'
+            '[PowerTag.S15_Socketable_Andariel."Script Formula 1" * 100|%|]増加する。'
+        )
+        compact = lambda value: re.sub(r"\s+", "", strip_d4_format_tags_preserving_values(value))
+        if (
+            en_row.key == "S15_Socketable_Azmodan"
+            and compact(english) == compact(expected_english)
+            and compact(japanese) == compact(broken_japanese)
+        ):
+            japanese = (
+                'ライフ最大値が[D4T_VALUE2]増加するが、プライマリリソース最大値が'
+                '[PowerTag.S15_Socketable_Azmodan."Script Formula 1" * 100|%|]減少する。'
+            )
+        pairs = create_d4_description_pairs(english, japanese)
+        # この装着効果ではMaxrollの加算表記が「50%[+]」になる。
+        # 既存カテゴリの生成キーを一括変更せず、この経路だけ対応する。
+        socketable_capture = D4_VALUE_CAPTURE.replace(r"%\[x\]", r"%\[(?:x|\+)\]")
+        return [(pattern.replace(D4_VALUE_CAPTURE, socketable_capture), value)
+                for pattern, value in pairs]
     if en_row.key != "Evade_Reduce_Cooldown_On_Attack":
         return None
 
@@ -1218,10 +1310,12 @@ def merge_csv_files(
     en_rows, en_duplicates = load_csv(en_path)
     ja_rows, ja_duplicates = load_csv(ja_path)
     ja_fallback_rows = unique_fallback_rows(ja_rows.values())
+    en_fallback_rows = unique_fallback_rows(en_rows.values())
 
     stats: Counter[str] = Counter()
     category_selected: Counter[str] = Counter()
     category_added: Counter[str] = Counter()
+    category_overwritten: Counter[str] = Counter()
     candidates: dict[str, tuple[str, str]] = {}
     conflicts: set[str] = set()
 
@@ -1236,7 +1330,7 @@ def merge_csv_files(
         if ja_row is None:
             ja_row = (
                 ja_fallback_rows.get(fallback_identity(en_row))
-                if category in {"paragon", "flavors", "runes"}
+                if en_fallback_rows.get(fallback_identity(en_row)) is not None
                 else None
             )
             if ja_row is None:
@@ -1330,6 +1424,15 @@ def merge_csv_files(
                 continue
             previous = candidates.get(candidate_key)
             if previous and previous[0] != candidate_value:
+                # Eagle等は装備のランダム名断片にも存在する。攻略用語として
+                # 明示されたスキルタグを、CSVの並び順によらず優先する。
+                if previous[1] == "rare-names" and category == "skill-tags":
+                    candidates[candidate_key] = (candidate_value, category)
+                    stats["skill-tag-preferred-over-rare-name"] += 1
+                    continue
+                if previous[1] == "skill-tags" and category == "rare-names":
+                    stats["skill-tag-preferred-over-rare-name"] += 1
+                    continue
                 # 同じ英語効果に通常版・旧シーズン版・チャーム版で訳語差が
                 # ある場合、先に現れる現行の基本版を採用する。
                 if category in TOOLTIP_TEXT_CATEGORIES:
@@ -1348,6 +1451,8 @@ def merge_csv_files(
     for key, (value, category) in candidates.items():
         if key in conflicts:
             continue
+        if key in existing and existing[key] != value:
+            stats["existing-value-differs"] += 1
         if key in existing and not overwrite_existing:
             stats["kept-existing"] += 1
             continue
@@ -1356,10 +1461,11 @@ def merge_csv_files(
             continue
         if key in existing:
             stats["overwritten"] += 1
+            category_overwritten[category] += 1
         else:
             stats["added"] += 1
+            category_added[category] += 1
         merged[key] = value
-        category_added[category] += 1
 
     stats["unmatched-en"] = len(set(en_rows) - set(ja_rows))
     stats["unmatched-ja"] = len(set(ja_rows) - set(en_rows))
@@ -1373,10 +1479,47 @@ def merge_csv_files(
         "categories": list(categories),
         "selected_by_category": dict(category_selected),
         "added_by_category": dict(category_added),
+        "overwritten_by_category": dict(category_overwritten),
         "counts": dict(stats),
         "conflict_keys": sorted(conflicts),
+        "added_rules": [
+            {"key": key, "value": value, "category": category}
+            for key, (value, category) in candidates.items() if key not in existing
+        ],
+        "existing_value_differences": [
+            {"key": key, "existing": existing[key], "candidate": value,
+             "category": category}
+            for key, (value, category) in candidates.items()
+            if key in existing and existing[key] != value
+        ],
+        "overwritten_rules": [
+            {"key": key, "previous": existing[key], "value": value,
+             "category": category}
+            for key, (value, category) in candidates.items()
+            if overwrite_existing and key in existing and existing[key] != value
+        ],
     }
     return merged, report
+
+
+def compare_season_rules(previous: dict[str, str], current: dict[str, str],
+                         existing: dict[str, str]) -> dict[str, object]:
+    """生成済みルールで比較する。CSVの行数やゲーム内の新規実装数ではない。"""
+    new_keys = sorted(current.keys() - previous.keys())
+    changed = sorted(key for key in current.keys() & previous.keys()
+                     if current[key] != previous[key])
+    needed = current.keys() - existing.keys()
+    return {
+        "previous_rules": len(previous), "current_rules": len(current),
+        "new_rule_keys": new_keys,
+        "changed_translations": [
+            {"key": key, "previous": previous[key], "current": current[key]}
+            for key in changed
+        ],
+        "removed_rule_keys": sorted(previous.keys() - current.keys()),
+        "new_rules_missing_from_dictionary": len(set(new_keys) & needed),
+        "previous_rules_missing_from_dictionary": len(previous.keys() & needed),
+    }
 
 
 def parse_categories(raw: str) -> tuple[str, ...]:
@@ -1409,6 +1552,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="出力 JSON（既定: sources/translations.json）",
     )
     parser.add_argument("--en", type=Path, help="英語 CSV")
+    parser.add_argument("--previous-en", type=Path, help="比較元シーズンの英語 CSV")
+    parser.add_argument("--previous-ja", type=Path, help="比較元シーズンの日本語 CSV")
     parser.add_argument(
         "--ja", "--jp", dest="ja", type=Path, help="日本語 CSV"
     )
@@ -1446,16 +1591,24 @@ def print_report(report: dict[str, object], output: Path, dry_run: bool) -> None
     print(f"Japanese rows: {report['japanese_rows']}")
     print(f"Selected     : {counts.get('selected', 0)}")
     print(f"Added        : {counts.get('added', 0)}")
+    print(f"Overwritten  : {counts.get('overwritten', 0)}")
     print(f"Kept existing: {counts.get('kept-existing', 0)}")
     print(f"Conflicts    : {counts.get('conflict-key', 0)}")
+    print(f"Existing translation differences: {counts.get('existing-value-differs', 0)}")
     print(f"Corrupt skip : {counts.get('rejected:corrupt', 0)}")
     print(f"Result       : {report['result']}")
-    print("Added by category:")
+    print("Changes by category (added / overwritten):")
     added = report["added_by_category"]
     assert isinstance(added, dict)
+    overwritten = report["overwritten_by_category"]
     for category in report["categories"]:
-        print(f"  {category:12}: {added.get(category, 0)}")
-    print("Dry run: no file was written." if dry_run else f"Saved: {output}")
+        print(f"  {category:12}: {added.get(category, 0)} / {overwritten.get(category, 0)}")
+    if "season_comparison" in report:
+        comparison = report["season_comparison"]
+        print(f"New season rules missing: {comparison['new_rules_missing_from_dictionary']}")
+        print(f"Previous rules missing  : {comparison['previous_rules_missing_from_dictionary']}")
+        print(f"Changed translations    : {len(comparison['changed_translations'])}")
+    print("Dry run: dictionary was not written." if dry_run else f"Saved: {output}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1467,6 +1620,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.en is None or args.ja is None:
         parser.error("--en と --ja の両方を指定してください")
+    if (args.previous_en is None) != (args.previous_ja is None):
+        parser.error("--previous-en と --previous-ja は両方を指定してください")
+    categories = args.categories
 
     try:
         base_path = args.base or args.output
@@ -1475,9 +1631,14 @@ def main(argv: list[str] | None = None) -> int:
             args.en,
             args.ja,
             existing,
-            categories=args.categories,
+            categories=categories,
             overwrite_existing=args.overwrite_existing,
         )
+        if args.previous_en:
+            previous, _ = merge_csv_files(args.previous_en, args.previous_ja, {},
+                                           categories=categories)
+            current, _ = merge_csv_files(args.en, args.ja, {}, categories=categories)
+            report["season_comparison"] = compare_season_rules(previous, current, existing)
         if not args.dry_run:
             save_json_atomic(merged, args.output)
         if args.report:

@@ -1,0 +1,174 @@
+SNO,FileName,Index,KeyHash,Key,Translation
+2651970,Item_S15_SoulSplinter_Andariel_01,0,4062401,Name,Lesser Splinter of Anguish
+2651970,Item_S15_SoulSplinter_Andariel_01,1,2789670820,Description,{c_important}+250 Fire Resistance{/c}
+2651970,Item_S15_SoulSplinter_Andariel_01,2,4123507722,Flavor,"""Cry out my name as the fires of Hell course through your veins!""
+– Andariel, Maiden of Anguish
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2663161,Item_S15_SoulSplinter_Andariel_02,0,4062401,Name,Splinter of Anguish
+2663161,Item_S15_SoulSplinter_Andariel_02,1,2789670820,Description,{c_important}+1750 Fire Resistance{/c}
+2663161,Item_S15_SoulSplinter_Andariel_02,2,4123507722,Flavor,"""Cry out my name as the fires of Hell course through your veins!""
+– Andariel, Maiden of Anguish
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2663169,Item_S15_SoulSplinter_Andariel_03,0,4062401,Name,Greater Splinter of Anguish
+2663169,Item_S15_SoulSplinter_Andariel_03,1,2789670820,Description,{c_important}+2625 Fire Resistance{/c}
+2663169,Item_S15_SoulSplinter_Andariel_03,2,4123507722,Flavor,"""Cry out my name as the fires of Hell course through your veins!""
+– Andariel, Maiden of Anguish
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2663171,Item_S15_SoulSplinter_Andariel_04,0,4062401,Name,Abyssal Splinter of Anguish
+2663171,Item_S15_SoulSplinter_Andariel_04,1,2789670820,Description,{c_important}+4375 Fire Resistance{/c}
+2663171,Item_S15_SoulSplinter_Andariel_04,2,4123507722,Flavor,"""Cry out my name as the fires of Hell course through your veins!""
+– Andariel, Maiden of Anguish"
+2651974,Item_S15_SoulSplinter_Azmodan_01,0,4062401,Name,Lesser Splinter of Sin
+2651974,Item_S15_SoulSplinter_Azmodan_01,1,2789670820,Description,{c_important}+250 Lightning Resistance{/c}
+2651974,Item_S15_SoulSplinter_Azmodan_01,2,4123507722,Flavor,"No matter how you try, the blood you wash from your hands continues to spread.
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662659,Item_S15_SoulSplinter_Azmodan_02,0,4062401,Name,Splinter of Sin
+2662659,Item_S15_SoulSplinter_Azmodan_02,1,2789670820,Description,{c_important}+1750 Lightning Resistance{/c}
+2662659,Item_S15_SoulSplinter_Azmodan_02,2,4123507722,Flavor,"No matter how you try, the blood you wash from your hands continues to spread.
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662661,Item_S15_SoulSplinter_Azmodan_03,0,4062401,Name,Greater Splinter of Sin
+2662661,Item_S15_SoulSplinter_Azmodan_03,1,2789670820,Description,{c_important}+2625 Lightning Resistance{/c}
+2662661,Item_S15_SoulSplinter_Azmodan_03,2,4123507722,Flavor,"No matter how you try, the blood you wash from your hands continues to spread.
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662666,Item_S15_SoulSplinter_Azmodan_04,0,4062401,Name,Abyssal Splinter of Sin
+2662666,Item_S15_SoulSplinter_Azmodan_04,1,2789670820,Description,{c_important}+4375 Lightning Resistance{/c}
+2662666,Item_S15_SoulSplinter_Azmodan_04,2,4123507722,Flavor,"No matter how you try, the blood you wash from your hands continues to spread."
+2651972,Item_S15_SoulSplinter_Belial_01,0,4062401,Name,Lesser Splinter of Lies
+2651972,Item_S15_SoulSplinter_Belial_01,1,2789670820,Description,{c_important}+250 Cold Resistance{/c}
+2651972,Item_S15_SoulSplinter_Belial_01,2,4123507722,Flavor,"""How can one be sure this came from his 'true' form? Does such a thing even exist?""
+– Tilnan the Collector
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662707,Item_S15_SoulSplinter_Belial_02,0,4062401,Name,Splinter of Lies
+2662707,Item_S15_SoulSplinter_Belial_02,1,2789670820,Description,{c_important}+1750 Cold Resistance{/c}
+2662707,Item_S15_SoulSplinter_Belial_02,2,4123507722,Flavor,"""How can one be sure this came from his 'true' form? Does such a thing even exist?""
+– Tilnan the Collector
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662709,Item_S15_SoulSplinter_Belial_03,0,4062401,Name,Greater Splinter of Lies
+2662709,Item_S15_SoulSplinter_Belial_03,1,2789670820,Description,{c_important}+2625 Cold Resistance{/c}
+2662709,Item_S15_SoulSplinter_Belial_03,2,4123507722,Flavor,"""How can one be sure this came from his 'true' form? Does such a thing even exist?""
+– Tilnan the Collector
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662711,Item_S15_SoulSplinter_Belial_04,0,4062401,Name,Abyssal Splinter of Lies
+2662711,Item_S15_SoulSplinter_Belial_04,1,2789670820,Description,{c_important}+4375 Cold Resistance{/c}
+2662711,Item_S15_SoulSplinter_Belial_04,2,4123507722,Flavor,"""How can one be sure this came from his 'true' form? Does such a thing even exist?""
+– Tilnan the Collector"
+2651979,Item_S15_SoulSplinter_BlackSoulStone_01,0,4062401,Name,Lesser Splinter of the Black Soulstone
+2651979,Item_S15_SoulSplinter_BlackSoulStone_01,1,2789670820,Description,{c_important}+7 All Stats{/c}
+2651979,Item_S15_SoulSplinter_BlackSoulStone_01,2,4123507722,Flavor,"""Abandon your quest, Nephalem. Your allies seek only to control you. With the power I offer, you and I could rule over all creation.""
+-Zoltun Kulle
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662958,Item_S15_SoulSplinter_BlackSoulStone_02,0,4062401,Name,Splinter of the Black Soulstone
+2662958,Item_S15_SoulSplinter_BlackSoulStone_02,1,2789670820,Description,{c_important}+20 All Stats{/c}
+2662958,Item_S15_SoulSplinter_BlackSoulStone_02,2,4123507722,Flavor,"""Abandon your quest, Nephalem. Your allies seek only to control you. With the power I offer, you and I could rule over all creation.""
+-Zoltun Kulle
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662960,Item_S15_SoulSplinter_BlackSoulStone_03,0,4062401,Name,Greater Splinter of the Black Soulstone
+2662960,Item_S15_SoulSplinter_BlackSoulStone_03,1,2789670820,Description,{c_important}+30 All Stats{/c}
+2662960,Item_S15_SoulSplinter_BlackSoulStone_03,2,4123507722,Flavor,"""Abandon your quest, Nephalem. Your allies seek only to control you. With the power I offer, you and I could rule over all creation.""
+-Zoltun Kulle
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662962,Item_S15_SoulSplinter_BlackSoulStone_04,0,4062401,Name,Abyssal Splinter of the Black Soulstone
+2662962,Item_S15_SoulSplinter_BlackSoulStone_04,1,2789670820,Description,{c_important}+50 All Stats{/c}
+2662962,Item_S15_SoulSplinter_BlackSoulStone_04,2,4123507722,Flavor,"""Abandon your quest, Nephalem. Your allies seek only to control you. With the power I offer, you and I could rule over all creation.""
+-Zoltun Kulle"
+2651946,Item_S15_SoulSplinter_Duriel_01,0,4062401,Name,Lesser Splinter of Pain
+2651946,Item_S15_SoulSplinter_Duriel_01,1,2789670820,Description,{c_important}+250 Poison Resistance{/c}
+2651946,Item_S15_SoulSplinter_Duriel_01,2,4123507722,Flavor,"""The anticipation of pain is often more exquisite than its fruits. Such is not the case with what I will inflict upon you.""
+– Duriel, Lord of Pain
+
+{icon:APS_Reward_CubeMaterials,1.5} Amalgamable"
+2662440,Item_S15_SoulSplinter_Duriel_02,0,4062401,Name,Splinter of Pain
+2662440,Item_S15_SoulSplinter_Duriel_02,1,2789670820,Description,{c_important}+1750 Poison Resistance{/c}
+2662440,Item_S15_SoulSplinter_Duriel_02,2,4123507722,Flavor,"""The anticipation of pain is often more exquisite than its fruits. Such is not the case with what I will inflict upon you.""
+– Duriel, Lord of Pain
+
+{icon:APS_Reward_CubeMaterials,1.5} Amalgamable"
+2662449,Item_S15_SoulSplinter_Duriel_03,0,4062401,Name,Greater Splinter of Pain
+2662449,Item_S15_SoulSplinter_Duriel_03,1,2789670820,Description,{c_important}+2625 Poison Resistance{/c}
+2662449,Item_S15_SoulSplinter_Duriel_03,2,4123507722,Flavor,"""The anticipation of pain is often more exquisite than its fruits. Such is not the case with what I will inflict upon you.""
+– Duriel, Lord of Pain
+
+{icon:APS_Reward_CubeMaterials,1.5} Amalgamable"
+2662453,Item_S15_SoulSplinter_Duriel_04,0,4062401,Name,Abyssal Splinter of Pain
+2662453,Item_S15_SoulSplinter_Duriel_04,1,2789670820,Description,{c_important}+4375 Poison Resistance{/c}
+2662453,Item_S15_SoulSplinter_Duriel_04,2,4123507722,Flavor,"""The anticipation of pain is often more exquisite than its fruits. Such is not the case with what I will inflict upon you.""
+– Duriel, Lord of Pain"
+2651981,Item_S15_SoulSplinter_Lilith_01,0,4062401,Name,Lesser Splinter of the Mother
+2651981,Item_S15_SoulSplinter_Lilith_01,1,2789670820,Description,{c_important}+250 Physical Resistance{/c}
+2651981,Item_S15_SoulSplinter_Lilith_01,2,4123507722,Flavor,"""Break the chains, and discover who you were meant to be. Break the chains, and be beautiful in Sin.""
+- Lilith, The Blessed Mother"
+2663195,Item_S15_SoulSplinter_Lilith_02,0,4062401,Name,Splinter of the Mother
+2663195,Item_S15_SoulSplinter_Lilith_02,1,2789670820,Description,{c_important}+1750 Physical Resistance{/c}
+2663195,Item_S15_SoulSplinter_Lilith_02,2,4123507722,Flavor,"""Break the chains, and discover who you were meant to be. Break the chains, and be beautiful in Sin.""
+- Lilith, The Blessed Mother
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2663197,Item_S15_SoulSplinter_Lilith_03,0,4062401,Name,Greater Splinter of the Mother
+2663197,Item_S15_SoulSplinter_Lilith_03,1,2789670820,Description,{c_important}+2625 Physical Resistance{/c}
+2663197,Item_S15_SoulSplinter_Lilith_03,2,4123507722,Flavor,"""Break the chains, and discover who you were meant to be. Break the chains, and be beautiful in Sin.""
+- Lilith, The Blessed Mother
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2663199,Item_S15_SoulSplinter_Lilith_04,0,4062401,Name,Abyssal Splinter of the Mother
+2663199,Item_S15_SoulSplinter_Lilith_04,1,2789670820,Description,{c_important}+4375 Physical Resistance{/c}
+2663199,Item_S15_SoulSplinter_Lilith_04,2,4123507722,Flavor,"""Break the chains, and discover who you were meant to be. Break the chains, and be beautiful in Sin.""
+- Lilith, The Blessed Mother"
+2651983,Item_S15_SoulSplinter_NaKrul_01,0,4062401,Name,Lesser Splinter of Hellfire
+2651983,Item_S15_SoulSplinter_NaKrul_01,1,2789670820,Description,{c_important}+35 Resistance to All Elements{/c}
+2651983,Item_S15_SoulSplinter_NaKrul_01,2,4123507722,Flavor,"""In Spiritu Sanctum. Praedictum Otium. Efficio Obitus Ut Inimicus.""
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662697,Item_S15_SoulSplinter_NaKrul_02,0,4062401,Name,Splinter of Hellfire
+2662697,Item_S15_SoulSplinter_NaKrul_02,1,2789670820,Description,{c_important}+250 Resistance to All Elements{/c}
+2662697,Item_S15_SoulSplinter_NaKrul_02,2,4123507722,Flavor,"""In Spiritu Sanctum. Praedictum Otium. Efficio Obitus Ut Inimicus.""
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662699,Item_S15_SoulSplinter_NaKrul_03,0,4062401,Name,Greater Splinter of Hellfire
+2662699,Item_S15_SoulSplinter_NaKrul_03,1,2789670820,Description,{c_important}+375 Resistance to All Elements{/c}
+2662699,Item_S15_SoulSplinter_NaKrul_03,2,4123507722,Flavor,"""In Spiritu Sanctum. Praedictum Otium. Efficio Obitus Ut Inimicus.""
+
+{icon:APS_Reward_CubeMaterials, 1.5} Amalgamable"
+2662701,Item_S15_SoulSplinter_NaKrul_04,0,4062401,Name,Abyssal Splinter of Hellfire
+2662701,Item_S15_SoulSplinter_NaKrul_04,1,2789670820,Description,{c_important}+625 Resistance to All Elements{/c}
+2662701,Item_S15_SoulSplinter_NaKrul_04,2,4123507722,Flavor,"""In Spiritu Sanctum. Praedictum Otium. Efficio Obitus Ut Inimicus."""
+2651976,Item_S15_SoulSplinter_Skarn_01,0,4062401,Name,Lesser Splinter of Damnation
+2651976,Item_S15_SoulSplinter_Skarn_01,1,2789670820,Description,{c_important}+250 Shadow Resistance{/c}
+2651976,Item_S15_SoulSplinter_Skarn_01,2,4123507722,Flavor,"""We have come for you. Our neglected kin. To cleanse you of the sin of Heaven. Only with us will you find salvation. Join us. Immortality... awaits you.""
+-Skarn, Lord of Damnation"
+2663066,Item_S15_SoulSplinter_Skarn_02,0,4062401,Name,Splinter of Damnation
+2663066,Item_S15_SoulSplinter_Skarn_02,1,2789670820,Description,{c_important}+1750 Shadow Resistance{/c}
+2663066,Item_S15_SoulSplinter_Skarn_02,2,4123507722,Flavor,"""We have come for you. Our neglected kin. To cleanse you of the sin of Heaven. Only with us will you find salvation. Join us. Immortality... awaits you.""
+-Skarn, Lord of Damnation"
+2663068,Item_S15_SoulSplinter_Skarn_03,0,4062401,Name,Greater Splinter of Damnation
+2663068,Item_S15_SoulSplinter_Skarn_03,1,2789670820,Description,{c_important}+2625 Shadow Resistance{/c}
+2663068,Item_S15_SoulSplinter_Skarn_03,2,4123507722,Flavor,"""We have come for you. Our neglected kin. To cleanse you of the sin of Heaven. Only with us will you find salvation. Join us. Immortality... awaits you.""
+-Skarn, Lord of Damnation"
+2663071,Item_S15_SoulSplinter_Skarn_04,0,4062401,Name,Abyssal Splinter of Damnation
+2663071,Item_S15_SoulSplinter_Skarn_04,1,2789670820,Description,{c_important}+4375 Shadow Resistance{/c}
+2663071,Item_S15_SoulSplinter_Skarn_04,2,4123507722,Flavor,"""We have come for you. Our neglected kin. To cleanse you of the sin of Heaven. Only with us will you find salvation. Join us. Immortality... awaits you.""
+-Skarn, Lord of Damnation"
+2656951,Item_S15_SoulSplinter_TriadA_01,0,4076048022,RequirementText,Cannot use while already using the Splinter of Terror
+2656951,Item_S15_SoulSplinter_TriadA_01,1,4062401,Name,Splinter of Terror
+2656951,Item_S15_SoulSplinter_TriadA_01,2,2789670820,Description,Replace your current splinter with the Splinter of Terror.
+2656951,Item_S15_SoulSplinter_TriadA_01,3,4123507722,Flavor,"A presence lingers at the corner of your vision, bringing you to pause as you question your sanity."
+2656955,Item_S15_SoulSplinter_TriadB_01,0,4076048022,RequirementText,Cannot use while already using the Splinter of Destruction
+2656955,Item_S15_SoulSplinter_TriadB_01,1,4062401,Name,Splinter of Destruction
+2656955,Item_S15_SoulSplinter_TriadB_01,2,2789670820,Description,Replace your current splinter with the Splinter of Destruction.
+2656955,Item_S15_SoulSplinter_TriadB_01,3,4123507722,Flavor,"When the Worldstone was destroyed at Arreat, the entropy of the Burning Hells became a part of the surrounding landscape."
+2656961,Item_S15_SoulSplinter_TriadC_01,0,4076048022,RequirementText,Cannot use while already using the Splinter of Hatred
+2656961,Item_S15_SoulSplinter_TriadC_01,1,4062401,Name,Splinter of Hatred
+2656961,Item_S15_SoulSplinter_TriadC_01,2,2789670820,Description,Replace your current splinter with the Splinter of Hatred.
+2656961,Item_S15_SoulSplinter_TriadC_01,3,4123507722,Flavor,"The corrupted Zakarum priests sacrificed anyone passing nearby Travincal, filling the Durance under the temple with discarded offerings to Mephisto."
+4280,UIToolTips,71,3502500573,Socketable,Can be inserted into equipment with sockets.
