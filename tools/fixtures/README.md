@@ -1,5 +1,12 @@
 # CSVテスト資料
 
+`maxroll_guide_glyph.html` は同じWarlockガイドの本文で取得した
+`.d4-glyph[data-d4-id="Rare_133_Intelligence_Side"]`（Superiority）です。
+アイコンの後にあるZWJ（U+200D）と`.d4-color-legendary`内の名前を保持しています。
+名前の実測色は`rgb(255, 128, 0)`、親本文は`rgb(232, 232, 232)`でした。
+本文の辞書変換と機械翻訳経路の両方で、訳語を元の色付きTextノードに残し、
+アイコン・イベントを保持することを検証します。空白・別の不可視区切り文字は派生ケースです。
+
 `maxroll_abodian_tooltip.html`、`maxroll_destruction_demon_tooltip.html`、
 `maxroll_skull_splitter_tooltip.html` は2026-09-26に
 [Warlockガイド](https://maxroll.gg/d4/build-guides/blazing-scream-warlock-guide)

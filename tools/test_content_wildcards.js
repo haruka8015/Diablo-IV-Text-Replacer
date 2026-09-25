@@ -26,6 +26,8 @@ function runContentWildcardTests(api) {
     equal(text, expected, 'repeated pass ' + pass);
   }
   const itemLabelCases = [
+    ['Paragon', 'パラゴン'],
+    ['PARAGON', 'パラゴン'],
     ['+8 Wrath Regeneration [8]', '憤怒回復量+8[8]'],
     ['Wrath Regeneration', '憤怒回復量'],
     ['+8.5 Wrath Regeneration', '憤怒回復量+8.5'],

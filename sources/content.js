@@ -577,6 +577,14 @@ chrome.storage.sync.get(
       return text.replace(GUIDE_TOKEN_PATTERN, token => ` ${token} `);
     }
 
+    function protectGuideTerms(text, allocator) {
+      // 通常の文章・見出しにはdata-d4-idがない。辞書変換前後の両方を
+      // 保護し、Translatorが一般名詞（亀鑑など）に訳し直すのを防ぐ。
+      return text.replace(/\bParagon\b|パラゴン/gi, () =>
+        allocator.allocate({type: 'term', label: 'パラゴン'})
+      );
+    }
+
     function normalizeGuideTranslationTokens(text) {
       return text.replace(
         GUIDE_TOKEN_PADDED_PATTERN,
@@ -643,12 +651,22 @@ chrome.storage.sync.get(
       }
       collectTextNodes(element);
 
-      if (!textNodes.length) {
-        element.appendChild(document.createTextNode(value));
+      // ゲームリンクではアイコンと色付きラベルの間にZWJ等がある。
+      // その装飾用Textへ訳語を移すと、色付きラベルが空になる。
+      const labelNodes = textNodes.filter(textNode =>
+        /[^\s\u200b-\u200d\u2060\ufeff]/.test(textNode.nodeValue)
+      );
+      const label = value.replace(
+        /^[\s\u200b-\u200d\u2060\ufeff]+|[\s\u200b-\u200d\u2060\ufeff]+$/g,
+        ''
+      );
+
+      if (!labelNodes.length) {
+        element.appendChild(document.createTextNode(label));
         return;
       }
-      textNodes.forEach((textNode, index) => {
-        textNode.nodeValue = index === 0 ? value : '';
+      labelNodes.forEach((textNode, index) => {
+        textNode.nodeValue = index === 0 ? label : '';
       });
     }
 
@@ -697,16 +715,27 @@ chrome.storage.sync.get(
 
       const replacements = [];
       for (const textNode of textNodes) {
+        const allocator = createGuideTokenAllocator(textNode.nodeValue);
+        if (!allocator) return false;
+        const protectedText = protectGuideTerms(textNode.nodeValue, allocator);
         const response = await sendBackgroundMessage({
           action: 'translateText',
-          text: textNode.nodeValue
+          text: prepareGuideTranslationInput(protectedText)
         });
         if (!response.ok) {
           return false;
         }
+        const output = normalizeGuideTranslationTokens(response.text);
+        if (!validateGuideTranslation(output, allocator.tokens)) return false;
+        let restoredText = '';
+        forEachGuideTextPart(output, part => {
+          restoredText += part.type === 'token'
+            ? allocator.tokens.get(part.value).label
+            : part.value;
+        });
         replacements.push([
           textNode,
-          applyRegexTransformations(response.text, regexTable)
+          applyRegexTransformations(restoredText, regexTable)
         ]);
       }
 
@@ -728,7 +757,7 @@ chrome.storage.sync.get(
 
       function serializeNode(node) {
         if (node.nodeType === 3) {
-          source += node.nodeValue;
+          source += protectGuideTerms(node.nodeValue, allocator);
           return;
         }
         if (
@@ -845,7 +874,9 @@ chrome.storage.sync.get(
 
         flushPlainText();
         const payload = tokens.get(part.value);
-        if (payload.type === 'node') {
+        if (payload.type === 'term') {
+          currentFragment().appendChild(document.createTextNode(payload.label));
+        } else if (payload.type === 'node') {
           setElementTextPreservingMarkup(payload.node, payload.label);
           currentFragment().appendChild(payload.node);
         } else if (payload.type === 'open') {

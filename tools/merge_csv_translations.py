@@ -199,6 +199,8 @@ PARAGON_TOOLTIP_UI_FIELDS = {
 
 
 def _is_paragon_row(row: CsvRow) -> bool:
+    if row.file_name == "SkillsUI" and row.key == "Paragon":
+        return True
     if row.file_name.startswith(
         ("Power_Paragon_", "Power_ParagonGlyph_")
     ):

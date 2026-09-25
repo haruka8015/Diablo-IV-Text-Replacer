@@ -230,6 +230,17 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 self.assertEqual(merged["of Metamorphosis"], "変容の")
                 self.assertEqual(report["counts"]["affix-alias-shadowed-by-skill"], 1)
 
+    def test_paragon_ui_name_is_generated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for language, value in (("en", "Paragon"), ("ja", "パラゴン")):
+                with (root / (language + ".csv")).open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    writer.writerow(["4276", "SkillsUI", "45", "2550454408", "Paragon", value])
+            merged, _ = merge_tool.merge_csv_files(root / "en.csv", root / "ja.csv", {})
+            self.assertEqual(merged, {"Paragon": "パラゴン"})
+
     def test_season_update_overwrites_existing_and_includes_item_flavor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
