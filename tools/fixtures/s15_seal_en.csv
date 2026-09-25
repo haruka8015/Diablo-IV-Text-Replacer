@@ -1,0 +1,10 @@
+SNO,FileName,Index,KeyHash,Key,Translation
+2609196,Affix_Talisman_SealAffix_AdditionalCharmSlot,0,4062401,Name,of Glory
+2609196,Affix_Talisman_SealAffix_AdditionalCharmSlot,1,3707583,Desc,+{c_number}1{/c} Charm Slot
+2437379,Affix_Talisman_SealAffix_Ancestral_03,0,4062401,Name,of Royal Grandeur
+2437379,Affix_Talisman_SealAffix_Ancestral_03,1,3707583,Desc,{c_mythic}Reduces the number of {c_important}Charms{/c} needed for Set bonuses by {c_number}1{/c} (to a minimum of 2).{/c}
+2608478,Affix_Talisman_SealAffix_Set_Warlock_02_DemonformDamageReduction,0,4062401,Name,of Demon Skin
+2608478,Affix_Talisman_SealAffix_Set_Warlock_02_DemonformDamageReduction,1,3707583,Desc,"{c_set}Flesh of Abaddon{/c}:
++{c_number}[Affix_Value_1 * 100|%||1|]{/c} Damage Reduction while in {c_important}Demonform{/c}"
+2340370,SetItemBonus_Talisman_Warlock_02,0,4062401,Name,Flesh of Abaddon
+4280,UIToolTips,696,2355437074,SealSlotToolTip,Unlocks {s1} Charm Slots

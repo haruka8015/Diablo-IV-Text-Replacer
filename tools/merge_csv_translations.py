@@ -293,6 +293,7 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                     in {
                         ("Hero", "ItemPower"),
                         ("GameOptions", "HeaderQuality"),
+                        ("UIToolTips", "SealSlotToolTip"),
                     }
                     or row.file_name == "ItemQuality"
                 ),
@@ -317,7 +318,8 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             Rule(
                 "items",
                 "アイテム種別、ユニーク、レジェンダリー、ルーンの名前",
-                lambda row: _is_legacy_item_file(row.file_name)
+                lambda row: (_is_legacy_item_file(row.file_name)
+                             or row.file_name.startswith("SetItemBonus_Talisman_"))
                 and row.key in NAME_FIELDS,
             ),
         ),
@@ -344,6 +346,7 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                     or row.file_name.startswith((
                         "Affix_Runeword_", "Affix_Talisman_SetPower_",
                         "Affix_Talisman_Charm_", "Affix_HellfireTorch_",
+                        "Affix_Talisman_SealAffix_",
                     ))
                 ),
             ),
@@ -1044,6 +1047,21 @@ def create_weapon_tooltip_pairs(
     return create_d4_description_pairs(en_row.translation, ja_row.translation)
 
 
+def create_seal_slot_pairs(en_row: CsvRow, ja_row: CsvRow) -> list[tuple[str, str]]:
+    """スロット数は文字列用の汎用captureではなく数値として扱う。"""
+    def numeric_slots(text: str) -> str:
+        text = text.replace("{s1}", "[D4T_SEAL_SLOTS]")
+        return re.sub(
+            r"\{c_number\}(\d+)\{/c\}",
+            lambda match: f"[D4T_SEAL_COUNT_{match.group(1)}]",
+            text,
+        )
+    pair = create_d4_description_pair(
+        numeric_slots(en_row.translation), numeric_slots(ja_row.translation)
+    )
+    return [pair] if pair else []
+
+
 def create_attribute_tooltip_pairs(
     en_row: CsvRow, ja_row: CsvRow
 ) -> list[tuple[str, str]] | None:
@@ -1096,6 +1114,14 @@ def create_attribute_tooltip_pairs(
                 '[PowerTag.S15_Socketable_Azmodan."Script Formula 1" * 100|%|]減少する。'
             )
         pairs = create_d4_description_pairs(english, japanese)
+        if re.fullmatch(r"S\d+_Socketable_Skarn", en_row.key):
+            # 全文内の下線付き用語を独立したspanとして保持するための対応。
+            # 英日とも強調語が一つだけの場合に限り、CSVから訳を取り出す。
+            term_re = r"\{c_important\}([^{}]+)\{/c\}"
+            en_terms = re.findall(term_re, en_row.translation)
+            ja_terms = re.findall(term_re, ja_row.translation)
+            if en_terms == ["Monster Power"] and len(ja_terms) == 1:
+                pairs.append((_escape_regex_text(en_terms[0]), ja_terms[0]))
         # この装着効果ではMaxrollの加算表記が「50%[+]」になる。
         # 既存カテゴリの生成キーを一括変更せず、この経路だけ対応する。
         socketable_capture = D4_VALUE_CAPTURE.replace(r"%\[x\]", r"%\[(?:x|\+)\]")
@@ -1144,9 +1170,22 @@ def make_attribute_alias_pairs(
     ja_row: CsvRow,
     key: str,
     value: str,
+    resource_names: Iterable[tuple[str, str]] = (),
 ) -> list[tuple[str, str]]:
     """Maxroll固有の属性値表記とパラゴン要件行を公式CSVから派生する。"""
     pairs: list[tuple[str, str]] = []
+
+    if en_row.key in {"Resource_Regen_Per_Second", "Resource_Regen_Bonus_Percent"}:
+        for en_name, ja_name in resource_names:
+            english = en_row.translation.replace("{VALUE1}", en_name)
+            japanese = ja_row.translation.replace("{VALUE1}", ja_name)
+            pair = create_template_pair(english, japanese)
+            if pair:
+                pairs.append(pair)
+                # 数値が別ノードでも、リソース名だけ先に翻訳されないようにする。
+                en_label = TEMPLATE_TOKEN_RE.sub("", english).strip()
+                ja_label = TEMPLATE_TOKEN_RE.sub("", japanese).strip()
+                pairs.append((_escape_regex_text(en_label), ja_label))
 
     # Maximum Lifeには同じ英語形で「最大ライフ」と「ライフ最大値の」の
     # 2訳がある。パラゴンが使う百分率形式だけを限定し、公式の百分率訳を採る。
@@ -1312,6 +1351,19 @@ def merge_csv_files(
     ja_fallback_rows = unique_fallback_rows(ja_rows.values())
     en_fallback_rows = unique_fallback_rows(en_rows.values())
 
+    resource_names: list[tuple[str, str]] = []
+    for row in en_rows.values():
+        if row.file_name != "UIToolTips" or not row.key.startswith("Resource_Type_"):
+            continue
+        counterpart = ja_rows.get(row.identity)
+        if counterpart is None and en_fallback_rows.get(fallback_identity(row)) is not None:
+            counterpart = ja_fallback_rows.get(fallback_identity(row))
+        if counterpart:
+            en_name = clean_color_tags(row.translation)
+            ja_name = clean_color_tags(counterpart.translation)
+            if en_name and ja_name and not re.search(r"[{}\ufffd]", en_name + ja_name):
+                resource_names.append((en_name, ja_name))
+
     stats: Counter[str] = Counter()
     category_selected: Counter[str] = Counter()
     category_added: Counter[str] = Counter()
@@ -1349,6 +1401,11 @@ def merge_csv_files(
             and en_row.file_name == "ParagonBoardUI"
             else None
         )
+        seal_slot_pairs = (
+            create_seal_slot_pairs(en_row, ja_row)
+            if en_row.file_name == "UIToolTips" and en_row.key == "SealSlotToolTip"
+            else None
+        )
         if paragon_ui_pairs is not None:
             if not paragon_ui_pairs:
                 stats["rejected:unsupported-paragon-ui"] += 1
@@ -1361,6 +1418,12 @@ def merge_csv_files(
                 continue
             pairs = attribute_pairs
             rejection = None
+        elif seal_slot_pairs is not None:
+            if not seal_slot_pairs:
+                stats["rejected:unsupported-seal-slots"] += 1
+                continue
+            pairs = seal_slot_pairs
+            rejection = None
         elif (
             category in TOOLTIP_TEXT_CATEGORIES
             or (
@@ -1369,7 +1432,9 @@ def merge_csv_files(
             )
         ):
             effect_pairs = (
-                create_drop_source_pairs(en_row, ja_row)
+                create_seal_slot_pairs(en_row, ja_row)
+                if en_row.file_name == "Affix_Talisman_SealAffix_AdditionalCharmSlot"
+                else create_drop_source_pairs(en_row, ja_row)
                 if category == "drop-sources"
                 else create_weapon_tooltip_pairs(en_row, ja_row)
                 if category == "weapon-tooltip"
@@ -1400,6 +1465,7 @@ def merge_csv_files(
             category not in TOOLTIP_TEXT_CATEGORIES
             and attribute_pairs is None
             and paragon_ui_pairs is None
+            and seal_slot_pairs is None
             and not (
                 category == "paragon"
                 and _is_paragon_description_row(en_row)
@@ -1413,6 +1479,7 @@ def merge_csv_files(
                         ja_row,
                         key,
                         value,
+                        resource_names,
                     )
                 )
             if category == "affixes" and _is_legendary_affix_file(en_row.file_name):

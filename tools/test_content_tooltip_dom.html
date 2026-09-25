@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Tooltip DOM tests</title>
+<pre id="result">Running…</pre>
+<script src="test_content_tooltip_dom.js"></script>
+<script src="test_content_wildcards.js"></script>
+<script>
+(async () => {
+  const [source, dictionary, fixture, sealFixture] = await Promise.all([
+    fetch('../sources/content.js').then(r => r.text()),
+    fetch('../sources/translations.json').then(r => r.json()),
+    fetch('fixtures/maxroll_skarn_tooltip.html').then(r => r.text()),
+    fetch('fixtures/maxroll_seal_tooltip.html').then(r => r.text())
+  ]);
+  new Function(source); // Syntax check of the complete content script.
+  const chromeStub = {
+    storage: {
+      onChanged: {addListener() {}},
+      sync: {get(keys, callback) {callback({enabled: true, guideTranslationEnabled: false});}}
+    },
+    runtime: {getURL(path) {return path;}}
+  };
+  // Keep the real definitions; omit automatic page observation and initialization.
+  const prefix = source.slice(0, source.indexOf('    let debounceTimer;'));
+  const api = new Function('chrome', 'fetch', `let api;
+    ${prefix}
+    api = {loadTranslations, replaceText, applyRegexTransformations,
+      getWildcardCaptureIndexes, hasUnsafeWildcardMatch, dynamicValue: DYNAMIC_VALUE_TEXT};
+    }}); return api;`)(chromeStub, async () => ({ok: true, json: async () => dictionary}));
+  const table = await api.loadTranslations();
+  window.testResult = {
+    dom: runContentTooltipDomTests(api, table, fixture, sealFixture),
+    text: runContentWildcardTests(api)
+  };
+  document.querySelector('#result').textContent = JSON.stringify(window.testResult, null, 2);
+})().catch(error => {
+  window.testResult = {error: String(error), stack: error.stack};
+  document.querySelector('#result').textContent = JSON.stringify(window.testResult, null, 2);
+});
+</script>

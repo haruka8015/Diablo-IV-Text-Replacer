@@ -121,6 +121,9 @@ python tools/merge_csv_translations.py output.json \
 `effects` はレジェンダリー、ユニーク、ミシック効果の説明文からゲーム内の
 装飾タグを除去し、Maxroll が表示する可変数値を正規表現に変換します。
 `attributes` の `S<番号>_Socketable_*` はソウルストーン系の長文効果として処理します。
+`Resource_Regen_Per_Second` / `Resource_Regen_Bonus_Percent` は
+`UIToolTips.Resource_Type_*` の英日リソース名を埋め込んだ規則も生成します。
+`Wrath` だけが先に置換されて `憤怒 Regeneration` と残るのを防ぎます。
 `{VALUE2}` と `PowerTag` の数値式が混在していても参照を対応付け、割合・`%[x]`・`%[+]`・
 数値範囲を保持します。英日で参照先が異なる効果は除外します。
 S15 CSVの `S15_Socketable_Azmodan` は日本語側がAndarielの文になっているため、
@@ -146,6 +149,10 @@ Maxroll のスキルTooltip向け全文ルールへ変換します。`{payload:.
 長さだけで「3 seconds.」などの短い断片が全文より先に置換されるのを防ぎます。
 `tooltip-labels` はアイテムパワー、品質、祖霊・レジェンダリーなどの装備Tooltip
 共通ラベルを変換します。
+刻印の `Affix_Talisman_SealAffix_*` の説明は `effects`、
+`SetItemBonus_Talisman_*` のセット名は `items`、`UIToolTips.SealSlotToolTip` は
+`tooltip-labels` で取り込みます。スロット解放数と追加スロット数は数値として照合し、
+短い「Charm」などの規則に先に分割されないようにします。
 `weapon-tooltip` は秒間ダメージ、命中ごとのダメージ、秒間攻撃回数と速度区分を
 数値込みの行単位で変換します。
 `drop-sources` はMaxrollのTooltip下部にあるドロップ元を対象に、
@@ -166,6 +173,14 @@ Maxroll のスキルTooltip向け全文ルールへ変換します。`{payload:.
 数値保持、`%[+]`、繰り返し実行、汎用キャプチャが別の文や翻訳済み日本語を
 巻き込まないことを確認します。Node.jsは任意で、拡張の実行には不要です。
 DOMの実表示を保証するテストではありません。
+
+実DOMから抽出した断罪の破片・ダイヤモンドの精神の刻印のフィクスチャを使うブラウザテストもあります。
+リポジトリルートで `python -m http.server 8765 --bind 127.0.0.1` を起動し、
+`http://127.0.0.1:8765/tools/test_content_tooltip_dom.html` を開きます。
+`dom.passed` と `text.passed` が表示されれば成功です。`error` があれば失敗です。
+実際の `content.js` の処理で、色付き親span外の句点、数値の順序、下線・要素・
+イベントの保持、繰り返し変換を検証します。Node.jsがない場合も利用できます。
+このフィクスチャ検証と、現在のMaxrollでのライブ確認は区別してください。
 
 ## convert_stringlist_to_translations.py
 

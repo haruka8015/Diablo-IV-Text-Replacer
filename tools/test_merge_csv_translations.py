@@ -19,6 +19,47 @@ SPEC.loader.exec_module(merge_tool)
 
 
 class MergeCsvTranslationsTests(unittest.TestCase):
+    def test_resource_regeneration_expands_csv_resource_names(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, _ = merge_tool.merge_csv_files(
+            fixture / "s15_resource_regeneration_en.csv",
+            fixture / "s15_resource_regeneration_ja.csv", {}
+        )
+        self.assertEqual(merged[r"Wrath\s+Regeneration"], "憤怒回復量")
+        self.assertEqual(merged[r"Wrath\s+Regeneration\s+per\s+Second"], "毎秒の憤怒回復量")
+        for raw, expected in [("+8 Wrath Regeneration", "憤怒回復量+8"),
+                              ("+8.5 Wrath Regeneration", "憤怒回復量+8.5"),
+                              ("10% Wrath Regeneration per Second", "毎秒の憤怒回復量10%")]:
+            matches = []
+            for pattern, value in merged.items():
+                match = re.fullmatch(pattern, raw)
+                if match and "(.*?)" not in pattern:
+                    matches.append(re.sub(r"\$(\d+)", lambda m: match.group(int(m[1])), value))
+            self.assertIn(expected, matches)
+
+    def test_seal_effects_set_names_and_slot_counts_are_imported(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_seal_en.csv", fixture / "s15_seal_ja.csv", {}
+        )
+        self.assertEqual(merged["Flesh of Abaddon"], "悪鬼の肉塊")
+        cases = [
+            ("Unlocks 7 Charm Slots", "チャームスロットを7個解放"),
+            ("+1 Charm Slot", "チャームスロット+1"),
+            ("+2 Charm Slot", "チャームスロット+2"),
+            ("+15% Damage Reduction while in Demonform", "悪魔形態中のダメージ減少率+15%"),
+            ("Reduces the number of Charms needed for Set bonuses by 1 (to a minimum of 2).",
+             "セット・ボーナスに必要なチャーム数を1減らす（最低2個）。"),
+        ]
+        for english, japanese in cases:
+            matched = []
+            for pattern, replacement in merged.items():
+                match = re.fullmatch(pattern, english)
+                if match:
+                    self.assertNotIn("(.*?)", pattern)
+                    matched.append(re.sub(r"\$(\d+)", lambda m: match.group(int(m[1])), replacement))
+            self.assertIn(japanese, matched, english)
+
     def soul_splinter_fixture(self):
         fixture = Path(__file__).parent / "fixtures"
         return merge_tool.merge_csv_files(fixture / "s15_soul_splinters_en.csv",
@@ -119,8 +160,9 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         fixture = Path(__file__).parent / "fixtures"
         merged, report = merge_tool.merge_csv_files(
             fixture / "s15_socketables_en.csv", fixture / "s15_socketables_ja.csv", {})
-        self.assertEqual(len(merged), 8)
-        self.assertEqual(report["added_by_category"], {"attributes": 8})
+        self.assertEqual(len(merged), 9)
+        self.assertEqual(report["added_by_category"], {"attributes": 9})
+        self.assertEqual(merged[r"Monster\s+Power"], "モンスターパワー")
         self.assertEqual(report["counts"].get("rejected:unsupported-attribute", 0), 0)
         for pattern, value in merged.items():
             self.assertNotIn("D4T_", pattern)
@@ -130,6 +172,20 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             self.assertNotIn("(.*?)", pattern)
             self.assertTrue(all(int(n) <= re.compile(pattern).groups
                                 for n in re.findall(r"\$(\d+)", value)))
+
+    def test_skarn_term_alias_requires_unambiguous_emphasis(self):
+        from dataclasses import replace
+        fixture = Path(__file__).parent / "fixtures"
+        en, _ = merge_tool.load_csv(fixture / "s15_socketables_en.csv")
+        ja, _ = merge_tool.load_csv(fixture / "s15_socketables_ja.csv")
+        row = next(row for row in en.values() if row.key == "S15_Socketable_Skarn")
+        japanese = ja[row.identity]
+        for changed in [
+            replace(japanese, translation=japanese.translation.replace("{c_important}", "")),
+            replace(japanese, translation=japanese.translation + "{c_important}別の用語{/c}"),
+        ]:
+            pairs = merge_tool.create_attribute_tooltip_pairs(row, changed)
+            self.assertNotIn(r"Monster\s+Power", dict(pairs))
 
     def test_skill_tag_wins_over_random_item_name_in_either_csv_order(self):
         for reverse in (False, True):

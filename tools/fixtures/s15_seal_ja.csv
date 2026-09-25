@@ -1,0 +1,10 @@
+SNO,FileName,Index,KeyHash,Key,Translation
+2609196,Affix_Talisman_SealAffix_AdditionalCharmSlot,0,4062401,Name,栄光の
+2609196,Affix_Talisman_SealAffix_AdditionalCharmSlot,1,3707583,Desc,チャームスロット+{c_number}1{/c}
+2437379,Affix_Talisman_SealAffix_Ancestral_03,0,4062401,Name,王家の威光の
+2437379,Affix_Talisman_SealAffix_Ancestral_03,1,3707583,Desc,{c_mythic}セット・ボーナスに必要な{c_important}チャーム{/c}数を{c_number}1{/c}減らす（最低2個）。{/c}
+2608478,Affix_Talisman_SealAffix_Set_Warlock_02_DemonformDamageReduction,0,4062401,Name,悪魔の皮の
+2608478,Affix_Talisman_SealAffix_Set_Warlock_02_DemonformDamageReduction,1,3707583,Desc,"{c_set}悪鬼の肉塊{/c}:
+{c_important}悪魔形態{/c}中のダメージ減少率+{c_number}[Affix_Value_1 * 100|%||1|]{/c}"
+2340370,SetItemBonus_Talisman_Warlock_02,0,4062401,Name,悪鬼の肉塊
+4280,UIToolTips,696,2355437074,SealSlotToolTip,チャームスロットを{s1}個解放

@@ -1222,9 +1222,15 @@ chrome.storage.sync.get(
       stats,
       supplementaryRangeNodes = [],
       containerNode = null,
-      runTopLevelNodes = []
+      runTopLevelNodes = [],
+      trailingPunctuationNode = null
     ) {
-      const originalText = textNodes.map(textNode => textNode.nodeValue).join('');
+      const originalText = textNodes.map(textNode => textNode.nodeValue).join('') +
+        (trailingPunctuationNode?.nodeValue || '');
+      function finishReplacement() {
+        if (trailingPunctuationNode) trailingPunctuationNode.nodeValue = '';
+        return true;
+      }
       stats.nodes += textNodes.length;
       stats.chars += originalText.length;
 
@@ -1523,7 +1529,7 @@ chrome.storage.sync.get(
         });
         writeSegment(nodePosition, textNodes.length, newText.slice(textPosition));
         removeDuplicatedPercentSuffixes();
-        return true;
+        return finishReplacement();
       }
 
       // 日本語化で「数値→項目名」が「項目名→数値」になる場合は、
@@ -1603,7 +1609,7 @@ chrome.storage.sync.get(
             }
           });
           containerNode.insertBefore(fragment, insertionPoint);
-          return true;
+          return finishReplacement();
         }
       }
 
@@ -1615,7 +1621,7 @@ chrome.storage.sync.get(
       textNodes.forEach((textNode, index) => {
         textNode.nodeValue = index === 0 ? newText : '';
       });
-      return true;
+      return finishReplacement();
     }
 
     function collectInlineTextNodes(
@@ -1851,6 +1857,24 @@ chrome.storage.sync.get(
         // ブロック境界を含まない要素では子孫テキストを一続きの文章として照合し、
         // 要素を作り直さず既存 Text ノードだけを書き換える。
         const hasBlockBoundary = hasBlockBoundaryChild(node);
+        // 装着効果は色付きspanの外に句点がある。span内を再配置の単位に
+        // すれば数値・下線・親の色を保持できる。句点は成功した時だけ消費する。
+        const punctuationNode = node.nextSibling;
+        if (
+          !hasBlockBoundary &&
+          node.matches('.d4-color-unique') &&
+          node.closest(LONG_TEXT_TOOLTIP_SELECTOR) &&
+          punctuationNode?.nodeType === 3 &&
+          /^[.!?]$/.test(punctuationNode.nodeValue)
+        ) {
+          const sentenceNodes = [];
+          const supplementaryNodes = [];
+          collectInlineTextNodes(node, sentenceNodes, supplementaryNodes);
+          if (sentenceNodes.length && replaceTextNodeRun(
+            sentenceNodes, regexTable, stats, supplementaryNodes,
+            node, [], punctuationNode
+          )) return stats;
+        }
         if (!hasBlockBoundary) {
           const inlineTextNodes = [];
           const supplementaryRangeNodes = [];

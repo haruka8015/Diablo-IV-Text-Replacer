@@ -25,7 +25,11 @@ function runContentWildcardTests(api) {
     text = api.applyRegexTransformations(text, [], null, {}, true);
     equal(text, expected, 'repeated pass ' + pass);
   }
-  const soulSplinterCases = [
+  const itemLabelCases = [
+    ['+8 Wrath Regeneration [8]', '憤怒回復量+8[8]'],
+    ['Wrath Regeneration', '憤怒回復量'],
+    ['+8.5 Wrath Regeneration', '憤怒回復量+8.5'],
+    ['10% Wrath Regeneration per Second', '毎秒の憤怒回復量10%'],
     ['Abyssal Splinter of the Mother', '母の破片（深淵）'],
     ['ABYSSAL SPLINTER OF SIN', '罪悪の破片（深淵）'],
     ['Abyssal Splinter of Pain', '苦痛の破片（深淵）'],
@@ -36,11 +40,11 @@ function runContentWildcardTests(api) {
     ['"Break the chains, and discover who you were meant to be. Break the chains, and be beautiful in Sin."\n- Lilith, The Blessed Mother',
      '「鎖を断ち切り、お前の真の姿を見つけよ。鎖を断ち切り、罪の中で美しくあれ」\n―祝福されし母リリス']
   ];
-  for (const [rawText, expectedText] of soulSplinterCases) {
+  for (const [rawText, expectedText] of itemLabelCases) {
     let translated = api.applyRegexTransformations(rawText, [], null, {}, true);
-    equal(translated, expectedText, 'soul splinter: ' + rawText);
+    equal(translated, expectedText, 'item label: ' + rawText);
     translated = api.applyRegexTransformations(translated, [], null, {}, true);
-    equal(translated, expectedText, 'soul splinter repeated: ' + rawText);
+    equal(translated, expectedText, 'item label repeated: ' + rawText);
   }
   const runeCases = [
     ['Cast 5 Skills then become exhausted for 3 seconds. (1 time)',
@@ -58,7 +62,7 @@ function runContentWildcardTests(api) {
     translated = api.applyRegexTransformations(translated, [], null, {}, true);
     equal(translated, expectedText, 'rune repeated: ' + rawText);
   }
-  return { passed: 14 + (soulSplinterCases.length + runeCases.length) * 2, translated: text };
+  return { passed: 14 + (itemLabelCases.length + runeCases.length) * 2, translated: text };
 }
 
 // Optional standalone runner: node tools/test_content_wildcards.js
