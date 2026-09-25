@@ -37,6 +37,13 @@ const SKILL_TOOLTIP_SELECTOR = [
     ':not(.d4t-tip-rare)' +
     ':not(.d4t-tip-legendary)'
 ].join(', ');
+// S15の名前欄と効果文で異なる公式訳。全文訳に存在する場合だけ、
+// リンク・下線を残すための対応先に使い、単独の用語訳は変更しない。
+const TOOLTIP_STYLED_TEXT_ALIASES = new Map([
+  ['incapacitated', ['行動制御効果', '操作障害効果']],
+  ['brimstone', ['ブリムストーン']],
+  ['brimstones', ['ブリムストーン']]
+]);
 const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li';
 const DROP_SOURCE_KEY_PREFIX = '__D4T_DROP_SOURCE__:';
 const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
@@ -1339,6 +1346,23 @@ chrome.storage.sync.get(
         return true;
       }
 
+      function wrappedPrefixNode(textNode) {
+        if (/^\s*[\(（]/.test(textNode.nodeValue)) return textNode;
+        const previous = textNode.previousSibling;
+        return previous?.nodeType === 3 && /^\s*[\(（]\s*$/.test(previous.nodeValue)
+          ? previous : null;
+      }
+      // 同値の「割合」と「括弧内の実数」を取り違えない。
+      // Reactは開き括弧と数値を隣接する別Textノードにする場合もある。
+      const dynamicValueKinds = new Map();
+      textNodes.forEach(textNode => {
+        const match = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT);
+        if (!match) return;
+        const kinds = dynamicValueKinds.get(match[1]) || new Set();
+        kinds.add(Boolean(wrappedPrefixNode(textNode)));
+        dynamicValueKinds.set(match[1], kinds);
+      });
+
       textNodes.forEach((textNode, nodeIndex) => {
         const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT);
         const ordinalMatch = textNode.nodeValue.match(DYNAMIC_ORDINAL_TEXT);
@@ -1366,17 +1390,40 @@ chrome.storage.sync.get(
               : translatedStyledText;
           if (
             textNode.parentElement?.closest('.d4-color-label') &&
-            originalStyledText.endsWith(':') &&
+            (
+              originalStyledText.endsWith(':') ||
+              (
+                textNodes.slice(0, nodeIndex).every(node => !node.nodeValue.trim()) &&
+                originalText.trimStart().startsWith(`${originalStyledText}:`)
+              )
+            ) &&
             !newText.includes(value)
           ) {
             const translatedLabelEnd = newText.indexOf(':');
             if (translatedLabelEnd >= 0) {
-              value = newText.slice(0, translatedLabelEnd + 1).trim();
+              // Active/Passiveのコロンが隣のTextノードにある場合も、
+              // 見出しspanには訳語だけを残して全文の再配置を可能にする。
+              value = newText.slice(
+                0, translatedLabelEnd + (originalStyledText.endsWith(':') ? 1 : 0)
+              ).trim();
+            }
+          }
+          if (value && !newText.includes(value)) {
+            // Demonology Summonのような複合タグは、単語別の訳には空白が
+            // 残るが、日本語の全文では「悪魔信仰召喚」と連結される。
+            const compactValue = value.replace(/([\u3040-\u30ff\u3400-\u9fff])\s+(?=[\u3040-\u30ff\u3400-\u9fff])/g, '$1');
+            if (compactValue !== value && newText.includes(compactValue)) {
+              value = compactValue;
+            } else {
+              value = TOOLTIP_STYLED_TEXT_ALIASES.get(originalStyledText.toLowerCase())
+                ?.find(alias => newText.includes(alias)) || value;
             }
           }
           if (value && !newText.includes(value)) {
             const inflectedBase =
-              !possessiveMatch && /s$/i.test(originalStyledText)
+              !possessiveMatch && /ies$/i.test(originalStyledText)
+                ? originalStyledText.slice(0, -3) + 'y'
+                : !possessiveMatch && /s$/i.test(originalStyledText)
                 ? originalStyledText.slice(0, -1)
                 : '';
             const translatedInflectedBase = inflectedBase
@@ -1418,9 +1465,14 @@ chrome.storage.sync.get(
         }
         while (
           valuePosition >= 0 &&
-          occupiedAnchorRanges.some(range =>
-            valuePosition < range.end &&
-            valuePosition + value.length > range.start
+          (
+            occupiedAnchorRanges.some(range =>
+              valuePosition < range.end &&
+              valuePosition + value.length > range.start
+            ) ||
+            (dynamicMatch && dynamicValueKinds.get(value)?.size === 2 &&
+              Boolean(wrappedPrefixNode(textNode)) !==
+                /[\(（]\s*$/.test(newText.slice(0, valuePosition)))
           )
         ) {
           valuePosition = newText.indexOf(value, valuePosition + 1);
@@ -1432,7 +1484,8 @@ chrome.storage.sync.get(
           nodeIndex,
           value,
           valuePosition,
-          wrapped: /^\s*[\(（]/.test(textNode.nodeValue)
+          wrapped: Boolean(wrappedPrefixNode(textNode)),
+          prefixNode: wrappedPrefixNode(textNode)
         });
         occupiedAnchorRanges.push({
           start: valuePosition,
@@ -1459,6 +1512,7 @@ chrome.storage.sync.get(
         if (!anchor.wrapped) {
           return;
         }
+        if (anchor.prefixNode !== anchorNode) anchor.prefixNode.nodeValue = '';
         textNodes.forEach((textNode, index) => {
           if (
             index !== anchor.nodeIndex &&

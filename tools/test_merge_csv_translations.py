@@ -207,6 +207,29 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 self.assertEqual(merged, {"Eagle": "イーグル"})
                 self.assertEqual(report["counts"]["skill-tag-preferred-over-rare-name"], 1)
 
+    def test_current_skill_wins_over_affix_alias_in_either_order(self):
+        for reverse in (False, True):
+            with self.subTest(reverse=reverse), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                rows = [("Affix_legendary_generic_121", "Name", "変容の"),
+                        ("Power_Warlock_ArchDemon", "name", "メタモルフォーゼ"),
+                        ("SkillTags", "Skill_Warlock_Metamorphosis_TagName", "メタモルフォーゼ")]
+                if reverse:
+                    rows.reverse()
+                for language in ("en", "ja"):
+                    with (root / (language + ".csv")).open("w", encoding="utf-8", newline="") as handle:
+                        writer = csv.writer(handle)
+                        writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                        for index, (file_name, key, value) in enumerate(rows):
+                            writer.writerow([str(index), file_name, "0", str(index), key,
+                                             ("of Metamorphosis" if file_name.startswith("Affix_") else "Metamorphosis")
+                                             if language == "en" else value])
+                merged, report = merge_tool.merge_csv_files(
+                    root / "en.csv", root / "ja.csv", {"Metamorphosis": "変容"}, overwrite_existing=True)
+                self.assertEqual(merged["Metamorphosis"], "メタモルフォーゼ")
+                self.assertEqual(merged["of Metamorphosis"], "変容の")
+                self.assertEqual(report["counts"]["affix-alias-shadowed-by-skill"], 1)
+
     def test_season_update_overwrites_existing_and_includes_item_flavor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

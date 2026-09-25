@@ -1350,6 +1350,11 @@ def merge_csv_files(
     ja_rows, ja_duplicates = load_csv(ja_path)
     ja_fallback_rows = unique_fallback_rows(ja_rows.values())
     en_fallback_rows = unique_fallback_rows(en_rows.values())
+    player_skill_names = {
+        make_translation_pair(row.translation, "スキル名")[0]
+        for row in en_rows.values()
+        if row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES) and row.key in NAME_FIELDS
+    }
 
     resource_names: list[tuple[str, str]] = []
     for row in en_rows.values():
@@ -1483,7 +1488,13 @@ def merge_csv_files(
                     )
                 )
             if category == "affixes" and _is_legendary_affix_file(en_row.file_name):
-                pairs.extend(make_affix_alias_pairs(key, value))
+                # of Metamorphosis等から作る省略名で現行スキル名を上書きしない。
+                # 正式な化身名の規則は残し、衝突する省略名だけを除外する。
+                for alias_key, alias_value in make_affix_alias_pairs(key, value):
+                    if alias_key in player_skill_names:
+                        stats["affix-alias-shadowed-by-skill"] += 1
+                    else:
+                        pairs.append((alias_key, alias_value))
 
         for candidate_key, candidate_value in pairs:
             if candidate_key in conflicts:
