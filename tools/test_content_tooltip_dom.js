@@ -1,11 +1,22 @@
 // Browser DOM tests; see test_content_tooltip_dom.html for the standalone runner.
-function runContentTooltipDomTests(api, regexTable, fixture, sealFixture, skillFixtures) {
+function runContentTooltipDomTests(api, regexTable, fixture, sealFixture, skillFixtures, hellguardFixture) {
   let passed = 0;
   function check(condition, label) {
     if (!condition) throw new Error(label);
     passed++;
   }
   const host = document.createElement('div');
+  const hellguard = document.createElement('div');
+  hellguard.innerHTML = hellguardFixture;
+  const hellguardElements = [...hellguard.querySelectorAll('*')];
+  api.replaceText(hellguard, regexTable);
+  check(hellguard.textContent === 'アボディアンは、〈アボディアンに命令〉の間、ブリムストーンを噴出する。移動中はブリムストーンを一定間隔で発射し、騎乗解除時に6個射出する。ブリムストーンはそれぞれ35% x [Damage]ダメージを与える。', 'Hellguard full paragraph: ' + hellguard.textContent);
+  check(hellguardElements.every(e => hellguard.contains(e)), 'Hellguard styled elements retained');
+  check(hellguard.querySelector('.d4-color-important').textContent === 'アボディアン', 'Hellguard Abodian style retained');
+  check([...hellguard.querySelectorAll('.d4-style-u')].every(e => e.textContent === 'ブリムストーン'), 'Hellguard Brimstone underlines retained');
+  const hellguardHtml = hellguard.innerHTML;
+  api.replaceText(hellguard, regexTable);
+  check(hellguard.innerHTML === hellguardHtml, 'Hellguard repeated translation stable');
   host.innerHTML = fixture;
   const tooltip = host.firstElementChild;
   const line = tooltip.querySelector('.d4t-list-affix');

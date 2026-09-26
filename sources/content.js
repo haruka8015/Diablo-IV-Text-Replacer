@@ -40,6 +40,7 @@ const SKILL_TOOLTIP_SELECTOR = [
 // S15の名前欄と効果文で異なる公式訳。全文訳に存在する場合だけ、
 // リンク・下線を残すための対応先に使い、単独の用語訳は変更しない。
 const TOOLTIP_STYLED_TEXT_ALIASES = new Map([
+  ['abodian', ['アボディアン']],
   ['incapacitated', ['行動制御効果', '操作障害効果']],
   ['brimstone', ['ブリムストーン']],
   ['brimstones', ['ブリムストーン']]

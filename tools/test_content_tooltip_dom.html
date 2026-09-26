@@ -36,10 +36,11 @@
   const table = await api.loadTranslations();
   const glyphFixture = await fetch('fixtures/maxroll_guide_glyph.html').then(r => r.text());
   const cubeFixture = await fetch('fixtures/maxroll_cube_article.html').then(r => r.text());
+  const hellguardFixture = await fetch('fixtures/hellguard_csv_markup.html').then(r => r.text());
   window.testResult = {
     resources: await runContentResourceTests(createApi, api, chromeStub, cubeFixture),
     guide: await runContentGuideTermTests(api, table, chromeStub, glyphFixture),
-    dom: runContentTooltipDomTests(api, table, fixture, sealFixture, skillFixtures.slice(0, 3)),
+    dom: runContentTooltipDomTests(api, table, fixture, sealFixture, skillFixtures.slice(0, 3), hellguardFixture),
     planner: await runContentPlannerTooltipDomTests(api, table, skillFixtures.slice(3), sealFixture),
     text: runContentWildcardTests(api)
   };
