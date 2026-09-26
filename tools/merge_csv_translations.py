@@ -997,6 +997,12 @@ def create_drop_source_pairs(
         return []
 
     pairs = [(DROP_SOURCE_KEY_PREFIX + english, japanese)]
+    if english in {"Butcher", "Beast In The Ice"}:
+        # Maxrollのドロップ元欄ではゲームの表示名に冠詞が付く。
+        pairs.append((DROP_SOURCE_KEY_PREFIX + "The " + english, japanese))
+    if english == "Grigoire":
+        # ActorのFlavorName英日対応。日本語では肩書きを名前の前に置く。
+        pairs.append((DROP_SOURCE_KEY_PREFIX + "Grigoire, The Galvanic Saint", "電撃の聖人" + japanese))
     if english == "Duriel":
         # Maxroll固有表記「Duriel, King of Maggots」の後半用。
         pairs.append(

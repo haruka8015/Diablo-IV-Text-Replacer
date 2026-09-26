@@ -1301,6 +1301,27 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             ],
         )
 
+    def test_drop_source_pairs_include_maxroll_articles_and_grigoire_title(self):
+        cases = [
+            ("Butcher", "ブッチャー", "The Butcher", "ブッチャー"),
+            ("Beast In The Ice", "氷に包まれた獣", "The Beast In The Ice", "氷に包まれた獣"),
+            ("Grigoire", "グリゴワール", "Grigoire, The Galvanic Saint", "電撃の聖人グリゴワール"),
+        ]
+        for english, japanese, alias, translated_alias in cases:
+            with self.subTest(english=english):
+                def row(text):
+                    return merge_tool.CsvRow(
+                        ("1", "ModifiedLootDescriptions", "1", "1", english),
+                        "ModifiedLootDescriptions", english, text, 1,
+                    )
+                self.assertEqual(
+                    merge_tool.create_drop_source_pairs(row(english), row(japanese)),
+                    [
+                        (merge_tool.DROP_SOURCE_KEY_PREFIX + english, japanese),
+                        (merge_tool.DROP_SOURCE_KEY_PREFIX + alias, translated_alias),
+                    ],
+                )
+
     def test_rune_effect_keeps_s_placeholder_as_dynamic_value(self):
         english = (
             "{c_RuneEffect}Invoke the Druid's "

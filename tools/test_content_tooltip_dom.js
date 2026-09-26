@@ -136,6 +136,54 @@ function runContentTooltipDomTests(api, regexTable, fixture, sealFixture, skillF
   return {passed};
 }
 
+async function runContentHeshaTooltipDomTests(api, table, fixtures) {
+  let passed = 0;
+  const check = (condition, label) => {
+    if (!condition) throw new Error(label);
+    passed++;
+  };
+  api.observeDOM(table);
+  for (const [index, html] of fixtures.entries()) {
+    for (const automatic of [false, true]) {
+      const host = document.createElement('div');
+      host.innerHTML = html;
+      const tip = host.firstElementChild;
+      const effect = tip.querySelector('.d4t-list-unique');
+      const elements = [...tip.querySelectorAll('*')];
+      const protector = effect.querySelector('.d4-color-important');
+      const gorilla = [...effect.querySelectorAll('.d4-color-important')][1];
+      const value = effect.querySelector(index ? '.d4t-value' : '.d4-color-random');
+      const valueText = value.textContent;
+      const notes = [...effect.querySelectorAll('.d4-color-inactive')].map(e => [e, e.textContent]);
+      let clicks = 0;
+      protector.addEventListener('click', () => clicks++);
+      if (automatic) {
+        document.body.append(host);
+        await new Promise(resolve => setTimeout(resolve, 250));
+      } else {
+        api.replaceText(tip, table);
+      }
+      const amount = index ? '78%[x] [78]%' : '[50 - 60]%[x]';
+      const expected = `〈守護者〉は離れた場所に召喚でき、叩きつけで敵を引き寄せるようになる。その範囲内にいる敵に対して自身のゴリラスキルで与えるダメージが${amount}増加する。敵がノックダウンされているかボスの場合、与えるダメージは2倍になる。`;
+      check(effect.textContent.startsWith(expected), `Hesha full effect (${index}, observer=${automatic}): ${effect.textContent}`);
+      check(elements.every(e => tip.contains(e)), 'Hesha original elements retained');
+      check(protector.textContent === '守護者' && gorilla.textContent === 'ゴリラ', 'Hesha skill emphasis retained');
+      check(value.textContent === valueText, 'Hesha numeric span retained');
+      check(notes.every(([e, text]) => e.textContent === text), 'Hesha multiplier and range retained');
+      if (index) check(effect.querySelector('.d4-color-mythic').textContent.startsWith(expected), 'Hesha mythic effect color retained');
+      protector.click();
+      check(clicks === 1, 'Hesha listener retained');
+      const translated = tip.outerHTML;
+      for (let pass = 0; pass < 3; pass++) {
+        api.replaceText(tip, table);
+        check(tip.outerHTML === translated, 'Hesha repeated translation stable');
+      }
+      host.remove();
+    }
+  }
+  return {passed};
+}
+
 async function runContentPlannerTooltipDomTests(api, table, fixtures, sealFixture) {
   let passed = 0;
   const check = (condition, label) => {

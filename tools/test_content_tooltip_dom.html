@@ -37,11 +37,14 @@
   const glyphFixture = await fetch('fixtures/maxroll_guide_glyph.html').then(r => r.text());
   const cubeFixture = await fetch('fixtures/maxroll_cube_article.html').then(r => r.text());
   const hellguardFixture = await fetch('fixtures/hellguard_csv_markup.html').then(r => r.text());
+  const heshaFixtures = await Promise.all(['link', 'equipment'].map(name =>
+    fetch(`fixtures/maxroll_hesha_${name}_tooltip.html`).then(r => r.text())));
   window.testResult = {
     resources: await runContentResourceTests(createApi, api, chromeStub, cubeFixture),
     guide: await runContentGuideTermTests(api, table, chromeStub, glyphFixture),
     dom: runContentTooltipDomTests(api, table, fixture, sealFixture, skillFixtures.slice(0, 3), hellguardFixture),
     planner: await runContentPlannerTooltipDomTests(api, table, skillFixtures.slice(3), sealFixture),
+    hesha: await runContentHeshaTooltipDomTests(api, table, heshaFixtures),
     text: runContentWildcardTests(api)
   };
   document.querySelector('#result').textContent = JSON.stringify(window.testResult, null, 2);

@@ -115,17 +115,102 @@ if (typeof require !== 'undefined' && require.main === module) {
     if (boundary < 0) throw new Error('content.js test extraction boundary is missing');
     const dictionary = JSON.parse(fs.readFileSync(path.join(root, 'sources/translations.json'), 'utf8'));
     const sandbox = {
-      console, window: {},
+      console, window: { location: { hostname: 'maxroll.gg' } },
       chrome: {
         storage: { onChanged: { addListener() {} }, sync: { get(keys, callback) { callback({ enabled: true }); } } },
         runtime: { getURL(value) { return value; } }
       },
       fetch: async () => ({ ok: true, json: async () => dictionary })
     };
-    vm.runInNewContext(source.slice(0, boundary) +
-      'window.api={loadTranslations,applyRegexTransformations,getWildcardCaptureIndexes,hasUnsafeWildcardMatch,dynamicValue:DYNAMIC_VALUE_TEXT}; }});',
-      sandbox);
+    const dropStart = source.indexOf('    function replaceDropSourceText(');
+    const dropEnd = source.indexOf('    function replaceTitleAttributes(', dropStart);
+    if (dropStart < 0 || dropEnd < 0) throw new Error('drop source extraction boundary is missing');
+    const labelStart = source.indexOf('    function getSplinterLabelTranslation(');
+    const labelEnd = source.indexOf('    function replaceTextNodeRun(', labelStart);
+    if (labelStart < 0 || labelEnd < 0) throw new Error('splinter label extraction boundary is missing');
+    const testSource = source.slice(0, boundary) + source.slice(dropStart, dropEnd) + source.slice(labelStart, labelEnd) +
+      'window.api={loadTranslations,applyRegexTransformations,replaceDropSourceText,getSplinterLabelTranslation,findStyledTranslationInSentence,getWildcardCaptureIndexes,hasUnsafeWildcardMatch,dynamicValue:DYNAMIC_VALUE_TEXT}; }});';
+    vm.runInNewContext(testSource, sandbox);
     await sandbox.window.api.loadTranslations();
+    // 特定のスキル名によらず、完全一致の候補を全文と照合する。
+    const styledSandbox = {
+      ...sandbox, window: {},
+      fetch: async () => ({ok: true, json: async () => ({
+        'Test\\s+Term': '第一訳', 'Test Term': '第二訳',
+        'Test (.*?)': '汎用訳', "Hero's": '所有格訳',
+      })}),
+    };
+    vm.runInNewContext(testSource, styledSandbox);
+    await styledSandbox.window.api.loadTranslations();
+    const styledCases = [
+      ['Test Term', '第二訳を使用する。', '第二訳'],
+      ['Test Term', '第一訳を使用する。', '第一訳'],
+      ['Test Term', '第一訳と第二訳を使用する。', null],
+      ['Test Term', '対応する訳がない。', null],
+      ['Prefix Test Term', '第二訳を使用する。', null],
+      ['Test Anything', '汎用訳を使用する。', null],
+      ['Hero’s', '所有格訳を使用する。', '所有格訳'],
+    ];
+    for (const [raw, sentence, expected] of styledCases) {
+      if (styledSandbox.window.api.findStyledTranslationInSentence(raw, sentence) !== expected) throw new Error('styled term candidate: ' + raw + ' / ' + sentence);
+    }
+    if (sandbox.window.api.findStyledTranslationInSentence('The Protector', '〈守護者〉は離れた場所に召喚できる。') !== '守護者') throw new Error('Protector full-sentence candidate');
+    if (sandbox.window.api.applyRegexTransformations('The Protector', []) !== '庇護者') throw new Error('Protector ordinary translation changed');
+    console.log({styledTermChecks: styledCases.length + 2});
+    // Maxroll S15_SeasonalSocketable全8系統。装備欄は英語名の末尾語を表示する。
+    const labelCases = [
+      ['Soulstone', 'ソウルストーン'], ['Anguish', '苦悶'], ['Pain', '苦痛'],
+      ['Damnation', '断罪'], ['Mother', '母'], ['Hellfire', '業火'],
+      ['Sin', '罪悪'], ['Lies', '欺瞞'],
+    ];
+    const registeredLabels = Object.keys(dictionary).filter(key => key.startsWith('__D4T_SPLINTER_LABEL__:')).map(key => key.slice('__D4T_SPLINTER_LABEL__:'.length)).sort();
+    if (JSON.stringify(registeredLabels) !== JSON.stringify(labelCases.map(([name]) => name).sort())) throw new Error('splinter label coverage');
+    const labelElement = { matches: () => true };
+    for (const [raw, expected] of labelCases) {
+      const actual = sandbox.window.api.getSplinterLabelTranslation([{parentElement:labelElement}], ' ' + raw.toUpperCase() + ' ');
+      if (actual !== expected) throw new Error('splinter label: ' + raw);
+    }
+    const generalLabelCases = [['Pain', '痛む'], ['Damnation', '断罪を呼びし'], ['Soulstone', 'Soulstone'], ['Mother', 'Mother'], ['Sin', '罪'], ['Hellfire', '業火']];
+    for (const [raw, expected] of generalLabelCases) {
+      const actual = sandbox.window.api.applyRegexTransformations(raw, [], null, {}, true);
+      if (actual !== expected) throw new Error('general dictionary changed: ' + raw + ' => ' + actual);
+    }
+    const labelMisses = [
+      [[{parentElement:{matches:()=>false}}], 'Pain'],
+      [[{parentElement:labelElement}], 'Unknown'],
+      [[{parentElement:labelElement}], 'Abyssal Splinter of Pain'],
+      [[{parentElement:labelElement}], 'Terror'],
+      [[{parentElement:labelElement}], 'Destruction'],
+      [[{parentElement:labelElement}], 'Hatred'],
+      [[{parentElement:labelElement}, {parentElement:{matches:()=>true}}], 'Pain'],
+    ];
+    for (const [nodes, raw] of labelMisses) {
+      if (sandbox.window.api.getSplinterLabelTranslation(nodes, raw) !== null) throw new Error('splinter scope: ' + raw);
+    }
+    sandbox.window.location.hostname = 'mobalytics.gg';
+    if (sandbox.window.api.getSplinterLabelTranslation([{parentElement:labelElement}], 'Pain') !== null) throw new Error('splinter host scope');
+    sandbox.window.location.hostname = 'maxroll.gg';
+    console.log({ splinterLabelChecks: 1 + labelCases.length + generalLabelCases.length + labelMisses.length + 1 });
+    const dropCases = [
+      ['The Butcher', 'ブッチャー'],
+      ['The Beast in the Ice', '氷に包まれた獣'],
+      ['Grigoire, The Galvanic Saint', '電撃の聖人グリゴワール'],
+      ['The Butcher, Grigoire, The Galvanic Saint, The Beast in the Ice', 'ブッチャー, 電撃の聖人グリゴワール, 氷に包まれた獣'],
+      [' grigoire , the galvanic saint ', '電撃の聖人グリゴワール'],
+      ['Grigoire, Andariel', 'グリゴワール, アンダリエル'],
+      ['Butcher, Beast In The Ice, Grigoire', 'ブッチャー, 氷に包まれた獣, グリゴワール'],
+      ['The Butcher, Duriel, King of Maggots', 'ブッチャー, デュリエル, マゴット・キング'],
+    ];
+    for (const [raw, expected] of dropCases) {
+      const textNode = { nodeType: 3, nodeValue: raw };
+      const element = { children: [], childNodes: [textNode], firstChild: textNode };
+      for (let pass = 0; pass < 3; pass++) {
+        sandbox.window.api.replaceDropSourceText(element, { nodes: 0, chars: 0, replacements: 0 });
+        textNode.nodeValue = sandbox.window.api.applyRegexTransformations(textNode.nodeValue, [], null, {}, true);
+        if (textNode.nodeValue !== expected) throw new Error('drop source: ' + JSON.stringify({raw, expected, actual: textNode.nodeValue, pass}));
+      }
+    }
+    console.log({ dropSourceChecks: dropCases.length * 3 });
     console.log(runContentWildcardTests(sandbox.window.api));
   })().catch(error => { console.error(error); process.exitCode = 1; });
 }

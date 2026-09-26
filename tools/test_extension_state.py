@@ -416,7 +416,7 @@ class ExtensionStateTests(unittest.TestCase):
         self.assertIn("const DROP_SOURCE_KEY_PREFIX =", content)
         self.assertIn("function replaceDropSourceText(element, stats)", content)
         self.assertIn("originalText.split(',').map(part =>", content)
-        self.assertIn("const bossName = part.trim()", content)
+        self.assertIn("const bossName = parts[index]", content)
         self.assertIn("translatedParts.join(', ')", content)
         self.assertIn("function isSupplementaryValueElement(element)", content)
         self.assertIn(

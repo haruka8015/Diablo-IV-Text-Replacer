@@ -161,6 +161,32 @@ Maxroll のスキルTooltip向け全文ルールへ変換します。`{payload:.
 数値込みの行単位で変換します。
 `drop-sources` はMaxrollのTooltip下部にあるドロップ元を対象に、
 `ModifiedLootDescriptions` のボス名とMaxroll固有の別名を登録します。
+冠詞付きの `The Butcher` / `The Beast In The Ice` と、
+肩書き付きの `Grigoire, The Galvanic Saint` も専用辞書に含め、
+「電撃の聖人グリゴワール」の語順に変換します。
+Maxroll独自の破片略称は `__D4T_SPLINTER_LABEL__:` の専用辞書で管理します。
+装備欄の季節要素内にあるアイコン下ラベルだけを完全一致で変換し、
+通常ルーンや本文の `Pain` / `Mother` などには適用しません。
+この辞書はCSVからの自動生成対象ではなく、サイトの表示に合わせて維持します。
+
+2026-09-26時点で、Maxrollの装備欄は `S15_SeasonalSocketable` の英語名の末尾語を略称として表示します。
+対象は8系統・各4等級（32アイテム）です。
+
+| Maxrollの略称 | 専用訳 |
+| --- | --- |
+| Soulstone | ソウルストーン |
+| Anguish | 苦悶 |
+| Pain | 苦痛 |
+| Damnation | 断罪 |
+| Mother | 母 |
+| Hellfire | 業火 |
+| Sin | 罪悪 |
+| Lies | 欺瞞 |
+
+`Splinter of Terror` / `Destruction` / `Hatred` はMaxrollでは `Consumable` で、
+この装備欄の略称表示には含まれません。シーズン更新時は「破片」という名前だけでなく、
+Maxroll側のアイテム種別と表示処理を照合して専用辞書の網羅性を確認します。
+
 `paragon` はボード・ノード・グリフ名に加え、`Power_Paragon_*`、
 `Power_ParagonGlyph_*`、`ParagonGlyphAffix_*` の効果文と、
 パラゴンTooltipのボーナス・要件テンプレート、グリフソケットの

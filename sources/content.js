@@ -47,6 +47,10 @@ const TOOLTIP_STYLED_TEXT_ALIASES = new Map([
 ]);
 const DROP_SOURCE_ITEM_SELECTOR = '.d4t-source li';
 const DROP_SOURCE_KEY_PREFIX = '__D4T_DROP_SOURCE__:';
+// Maxrollの破片アイコン下の略称。通常ルーンや本文の同名単語には適用しない。
+const SPLINTER_LABEL_SELECTOR =
+  '[class*="equipment_Equipment__seasonal__"] [class*="equipment_Equipment__runeName__"]';
+const SPLINTER_LABEL_KEY_PREFIX = '__D4T_SPLINTER_LABEL__:';
 const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
 const MAXROLL_INTERACTIVE_PARAGON_SELECTOR =
   '[class*="_D4PlannerPageParagon__embed_"]';
@@ -120,6 +124,7 @@ chrome.storage.sync.get(
     if (D4DEBUG_DISPLAY) console.log('[D4T] Content script loaded'); // デバッグ用ログ
 
     let dropSourceTranslations = new Map();
+    let splinterLabelTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
     let compiledPatternIndex = null;
@@ -210,8 +215,16 @@ chrome.storage.sync.get(
           .then(data => {
             translationRegexCache.clear();
             dropSourceTranslations = new Map();
+            splinterLabelTranslations = new Map();
             const translationEntries = [];
             Object.entries(data).forEach(([pattern, replacement]) => {
+              if (pattern.startsWith(SPLINTER_LABEL_KEY_PREFIX)) {
+                splinterLabelTranslations.set(
+                  pattern.slice(SPLINTER_LABEL_KEY_PREFIX.length).toLocaleLowerCase('en-US'),
+                  replacement
+                );
+                return;
+              }
               if (pattern.startsWith(DROP_SOURCE_KEY_PREFIX)) {
                 const bossName = pattern.slice(DROP_SOURCE_KEY_PREFIX.length);
                 dropSourceTranslations.set(
@@ -1278,6 +1291,37 @@ chrome.storage.sync.get(
       });
     }
 
+    function getSplinterLabelTranslation(textNodes, originalText) {
+      const element = textNodes[0]?.parentElement;
+      if (
+        !/(^|\.)maxroll\.gg$/i.test(window.location?.hostname || '') ||
+        !element?.matches(SPLINTER_LABEL_SELECTOR) ||
+        !textNodes.every(node => node.parentElement === element)
+      ) return null;
+      return splinterLabelTranslations.get(originalText.trim().toLocaleLowerCase('en-US')) ?? null;
+    }
+
+    function findStyledTranslationInSentence(originalText, translatedSentence) {
+      // 単独置換の優先訳と全文中の訳が異なる場合、同じ語句に完全一致する
+      // 辞書規則から対応先を探す。部分一致や汎用ワイルドカードは採用しない。
+      const candidates = new Set();
+      for (const pattern of selectCompiledPatterns(
+        originalText, compiledPatterns, compiledPatternIndex
+      )) {
+        if (pattern.wildcardCaptureIndexes.length || pattern.minLength > originalText.length) continue;
+        const regex = getTranslationRegex(pattern.sourcePattern);
+        regex.lastIndex = 0;
+        const match = regex.exec(originalText);
+        if (!match || match.index !== 0 || match[0].length !== originalText.length) continue;
+        const translated = originalText.replace(regex, pattern.replacement).trim();
+        if (translated && translated !== originalText && translatedSentence.includes(translated)) {
+          candidates.add(translated);
+        }
+      }
+      // 全文に複数の候補が含まれる場合は、装飾位置を推測しない。
+      return candidates.size === 1 ? candidates.values().next().value : null;
+    }
+
     function replaceTextNodeRun(
       textNodes,
       regexTable,
@@ -1306,7 +1350,9 @@ chrome.storage.sync.get(
           tooltipContainer?.matches(SKILL_TOOLTIP_SELECTOR)
         )
       };
-      const newText = applyRegexTransformations(
+      const splinterLabel = getSplinterLabelTranslation(textNodes, originalText);
+      if (splinterLabel !== null && splinterLabel !== originalText) stats.replacements++;
+      const newText = splinterLabel ?? applyRegexTransformations(
         originalText,
         regexTable,
         stats,
@@ -1462,6 +1508,9 @@ chrome.storage.sync.get(
                 0, translatedLabelEnd + (originalStyledText.endsWith(':') ? 1 : 0)
               ).trim();
             }
+          }
+          if (value && !newText.includes(value)) {
+            value = findStyledTranslationInSentence(originalStyledText, newText) || value;
           }
           if (value && !newText.includes(value)) {
             // Demonology Summonのような複合タグは、単語別の訳には空白が
@@ -2035,7 +2084,7 @@ chrome.storage.sync.get(
 
     function replaceDropSourceText(element, stats) {
       // Maxrollは複数のドロップ元をカンマ区切りで1つの<li>に描画する。
-      // 組み合わせ全文を列挙せず、各ボス名をtrimして個別に辞書照合する。
+      // 名前と肩書きの間にもカンマがあるため、隣接する2片の辞書照合を優先する。
       if (
         element.children.length > 0 ||
         element.childNodes.length !== 1 ||
@@ -2046,17 +2095,29 @@ chrome.storage.sync.get(
       const textNode = element.firstChild;
       const originalText = textNode.nodeValue;
       let replacementCount = 0;
-      const translatedParts = originalText.split(',').map(part => {
-        const bossName = part.trim();
+      const parts = originalText.split(',').map(part => part.trim());
+      const translatedParts = [];
+      for (let index = 0; index < parts.length; index++) {
+        const bossName = parts[index];
+        const fullName = index + 1 < parts.length
+          ? dropSourceTranslations.get(
+              `${bossName}, ${parts[index + 1]}`.toLocaleLowerCase('en-US')
+            )
+          : undefined;
+        if (fullName) {
+          translatedParts.push(fullName);
+          replacementCount++;
+          index++;
+          continue;
+        }
         const translated = dropSourceTranslations.get(
           bossName.toLocaleLowerCase('en-US')
         );
         if (translated) {
           replacementCount++;
-          return translated;
         }
-        return bossName;
-      });
+        translatedParts.push(translated || bossName);
+      }
       if (!replacementCount) {
         return false;
       }

@@ -86,6 +86,15 @@ Azmodanの日本語行にはAndarielの文と数値参照が入っています�
 リソース回復量2種類と `UIToolTips.Resource_Type_*` の行を抽出しています。
 リソース名を汎用キャプチャに残さず、Wrath等の具体名を埋め込んだ規則と用語訳を
 生成する検証に使用します。同じ英文に複数の訳がある行も原文のまま保持しています。
+`maxroll_hesha_link_tooltip.html` / `maxroll_hesha_equipment_tooltip.html` は
+2026-09-26に https://maxroll.gg/d4/build-guides/touch-of-death-spiritborn-guide
+で実際にホバーして取得した「Hesha e Kesungi」のTooltipです。
+本文リンクは `[data-d4-id="Gloves_Unique_Spiritborn_100"]`、装備欄は
+`[class*="equipment_slot-13__"]` を対象にしています。
+それぞれ `.d4t-GameTooltip.d4t-tip-unique` と `.d4t-GameTooltip.d4t-tip-mythic` です。
+「The Protector」の通常訳「庇護者」と効果文中の「〈守護者〉」の差による全文置換の失敗、
+神秘装備の色、数値・補足範囲・倍率記号の保持、後挿入時の自動変換を検証します。
+
 # 同調プリズムの名前
 
 `s15_gem_names_en.csv` / `s15_gem_names_ja.csv` は S15 CSV の `Item_Gem_*`
