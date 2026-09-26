@@ -117,7 +117,11 @@ python tools/merge_csv_translations.py output.json \
 ```
 
 既定カテゴリは
-`attributes,drop-sources,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,flavors,rare-names,powers,paragon,skill-tags,skills` です。
+`attributes,drop-sources,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,prism-descriptions,flavors,rare-names,powers,paragon,skill-tags,skills` です。
+
+`prism-descriptions` は同調プリズムの用途・使用条件・入手元を変換します。
+`Item_X2_HoradricCube_TuningStone_*` の名前は `items`、フレーバーは `flavors` で取り込みます。
+アイコン指定は表示用の画像なので、名前と説明の照合文字列から取り除きます。
 `effects` はレジェンダリー、ユニーク、ミシック効果の説明文からゲーム内の
 装飾タグを除去し、Maxroll が表示する可変数値を正規表現に変換します。
 `attributes` の `S<番号>_Socketable_*` はソウルストーン系の長文効果として処理します。

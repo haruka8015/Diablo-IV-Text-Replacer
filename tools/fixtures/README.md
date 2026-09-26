@@ -1,5 +1,25 @@
 # CSVテスト資料
 
+`hellguard_csv_markup.html` は S15 CSV の `Power_Warlock_ClassMechanic_Vanguard_A`
+の desc 第2段落の色・下線タグをspanに展開した再現用フィクスチャ（実DOMの取得物ではない）。
+数値は報告画像の6・35%を使用し、既存の実測スキルTooltipと同じ形式でダメージ注記を付けた。
+色付きAbodianの全文訳への対応付け、文の並べ替え、数値・下線・注記の保持を検証する。
+
+`s15_cube_material_names_en.csv` / `s15_cube_material_names_ja.csv` は S15 CSV の
+`Item_X2_HoradricCube_CraftingMaterial_*` と `Item_X2_Talisman_CraftingMaterial_*`
+の Name 全9行。原初の塵8種類と浸染したホラドリムの樹脂について、
+アイコン指定除去・正式名・レシピ表示の数量保持を検証する。
+
+`s15_new_runes_en.csv` / `s15_new_runes_ja.csv` はS15 CSVの
+`Item_S15_Rune_*` 12種類の40行と、供物・連携・クールダウンの共通UI5行、
+誤爆確認用の装備名断片「The」1行です。名前だけでなく効果・連結名を検証します。
+`maxroll_cube_article.html` は2026-09-26に
+[Horadric Cube記事](https://maxroll.gg/d4/resources/horadric-cube)から取得した抜粋です。
+通常段落、markによる色分け、見出し、入れ子リスト、表、Tirのゲームリンクを保持しています。
+Resourcesパスでのみ翻訳対象になること、本文が翻訳サービスへ渡ること、
+子リストの翻訳で親を再翻訳しないこと、翻訳OFF時の辞書処理を検証します。
+翻訳サービスの返答はテスト用の代替応答です。
+
 `maxroll_guide_glyph.html` は同じWarlockガイドの本文で取得した
 `.d4-glyph[data-d4-id="Rare_133_Intelligence_Side"]`（Superiority）です。
 アイコンの後にあるZWJ（U+200D）と`.d4-color-legendary`内の名前を保持しています。
@@ -66,3 +86,18 @@ Azmodanの日本語行にはAndarielの文と数値参照が入っています�
 リソース回復量2種類と `UIToolTips.Resource_Type_*` の行を抽出しています。
 リソース名を汎用キャプチャに残さず、Wrath等の具体名を埋め込んだ規則と用語訳を
 生成する検証に使用します。同じ英文に複数の訳がある行も原文のまま保持しています。
+# 同調プリズムの名前
+
+`s15_gem_names_en.csv` / `s15_gem_names_ja.csv` は S15 CSV の `Item_Gem_*`
+の Name 全64行（重複を除く57名称）。7種類の宝石の全8品質と最高天の眼を
+検証する。Royal などの単語単位の既存訳より、宝石名全体の公式訳を優先する。
+
+`s15_prism_tooltips_en.csv` / `s15_prism_tooltips_ja.csv` は同じ8種類の
+Name・Description・Flavorの全24行。用途・使用条件・入手元・フレーバーの
+取り込みと、説明文のアイコン指定除去を検証する。
+
+`s15_prism_names_en.csv` / `s15_prism_names_ja.csv` は S15 CSV の
+`Item_X2_HoradricCube_TuningStone_1` ～ `_8` の Name 行をそのまま抽出したもの。
+カテゴリの取り込み漏れ、名前中のアイコン指定の除去、単数・複数形を検証する。
+Maxroll の Horadric Cube 記事では `data-d4-id="2533710"` の表示名が
+`Aggressive Tuning Prism` であることを取得済み記事DOMで確認した。
