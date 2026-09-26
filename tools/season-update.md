@@ -37,6 +37,7 @@ python tools/merge_csv_translations.py --en tmp/S16/en.csv --ja tmp/S16/ja.csv -
    | 装備効果・スキル説明 | effects、attributes、skills、runesなど |
    | アイテムのフレーバー | flavors（引用・話者表記も含む） |
    | 基礎ステータス・使用条件・装着説明 | attributes、tooltip-labels、共通UI行など |
+   | クラス固有システムの名前・見出し・説明 | minions、class-mechanics、skills（別系列の固有UI行も確認） |
 
 3. 対象外のNPC会話・クエスト・ストーリー本文まで増えていないか確認する。
 4. 英日Index差、対応のない行、生成を拒否された行、同じ英文の訳の競合を確認する。

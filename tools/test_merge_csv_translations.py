@@ -2,6 +2,7 @@ import csv
 import contextlib
 import importlib.util
 import io
+import os
 import json
 import re
 import sys
@@ -19,8 +20,151 @@ SPEC.loader.exec_module(merge_tool)
 
 
 class MergeCsvTranslationsTests(unittest.TestCase):
+    def local_fixture_dir(self):
+        if os.environ.get("D4T_LOCAL_FIXTURES") != "1":
+            self.skipTest("Local third-party inputs: set D4T_LOCAL_FIXTURES=1 to opt in")
+        fixture = Path(__file__).resolve().parents[1] / "tmp" / "local-fixtures"
+        if not fixture.is_dir():
+            self.skipTest("Local inputs are not present in tmp/local-fixtures")
+        return fixture
+
+    def test_sorcerer_enchantment_import_and_shield_values(self):
+        fixture = self.local_fixture_dir()
+        merged, _ = merge_tool.merge_csv_files(
+            fixture / "s15_sorcerer_enchantments_en.csv", fixture / "s15_sorcerer_enchantments_ja.csv",
+            {"Frost": "寒気をまとう"},
+        )
+        self.assertEqual(merged['Enchantments'], 'エンチャントメント')
+        self.assertEqual(merged['Frost'], '寒気をまとう')
+        self.assertEqual(merged[merge_tool.STYLED_TERM_KEY_PREFIX + 'Frost'], '凍結')
+        for raw in [
+            'Familiar becomes a Shock Skill that deals Lightning damage.',
+            'Familiar increases your Minimum Ferocity by 1 and grants 2.00% Cooldown Reduction while active.',
+            'A Barrier of ice forms around you for 5 seconds, absorbing 36% of your Maximum Life (36% x [HP]) in damage.',
+        ]:
+            self.assertTrue(any(re.fullmatch(k, raw) for k in merged if not k.startswith('__D4T_')), raw)
+
+    def test_warlock_styled_terms_come_from_paired_effects(self):
+        fixture = self.local_fixture_dir()
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_warlock_shards_en.csv", fixture / "s15_warlock_shards_ja.csv",
+            {"Occult": "狂信者", "Recast": "再使用"},
+        )
+        prefix = merge_tool.STYLED_TERM_KEY_PREFIX
+        self.assertEqual(report["selected_by_category"]["skills"], 16)
+        self.assertEqual(merged[prefix + "Occult"], "邪教")
+        self.assertEqual(merged[prefix + "Recast"], "再発動")
+        self.assertEqual(set(merged[prefix + "Occult Hellfire"].splitlines()), {"邪教の業火", "邪教業火"})
+        self.assertEqual(merged[prefix + "Occult Abyss"], "邪教の深淵")
+        self.assertEqual(merged["Occult"], "狂信者")
+        self.assertEqual(merged["Valloch"], "ヴァロク")
+        self.assertEqual(merged["Laalish"], "ラアリシュ")
+
+    def test_styled_terms_use_unique_numeric_intervals(self):
+        en = '{c_important}First{/c} {SF_0} {c_important}Second{/c} {SF_1}'
+        ja = '{c_important}第一{/c} {SF_0} {c_important}第二{/c} {SF_1}'
+        prefix = merge_tool.STYLED_TERM_KEY_PREFIX
+        self.assertEqual(dict(merge_tool.create_styled_term_pairs(en, ja)), {
+            prefix + "First": "第一", prefix + "Second": "第二",
+        })
+        self.assertEqual(merge_tool.create_styled_term_pairs(
+            '{c_important}First{/c} and {c_important}Second{/c}',
+            '{c_important}第二{/c}と{c_important}第一{/c}',
+        ), [])
+        self.assertEqual(merge_tool.create_styled_term_pairs(en, ja + '\n追加の行'), [])
+
+    def test_class_mechanics_cover_other_classes_and_preserve_existing_names(self):
+        fixture = self.local_fixture_dir()
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_class_mechanics_en.csv", fixture / "s15_class_mechanics_ja.csv",
+            {"Eagle": "イーグル", "Zealot": "狂信者"},
+        )
+        self.assertEqual(report["selected_by_category"]["class-mechanics"], 77)
+        self.assertEqual(merged["Eagle"], "イーグル")
+        self.assertEqual(merged["Zealot"], "狂信者")
+        for raw, expected in {
+            "Weapon Expertise": "武器の専門知識", "Spirit Boons": "精霊の恩恵",
+            "Specializations": "カテゴリー", "Enchantment Effect": "エンチャントメントの効果",
+            "Spirit Hall": "精霊の広間", "Oaths": "誓約", "Soul Shards": "ソウル・シャード",
+        }.items():
+            with self.subTest(raw=raw):
+                self.assertTrue(any(re.fullmatch(k, raw) and v == expected for k, v in merged.items()))
+        self.assertFalse(any("(.*?)" in k or "[PH]" in k or "Lorem" in k for k in merged))
+
+    def test_class_mechanic_numeric_templates_preserve_values(self):
+        fixture = self.local_fixture_dir()
+        merged, _ = merge_tool.merge_csv_files(
+            fixture / "s15_class_mechanics_en.csv", fixture / "s15_class_mechanics_ja.csv", {},
+        )
+        for raw, expected in [
+            ("12.5% of damage dealt as Bleed damage.", "ダメージの12.5%を流血ダメージとして与える。"),
+            ("Killing an enemy grants +8.5% Attack Speed for 2 seconds.", "敵をキルすると2秒間、攻撃速度が8.5%上昇する。"),
+            ("Rank 3/10", "ランク 3/10"),
+            ("Next Rank: 4", "次ランク: 4"),
+            ("This Enchantment Slot is locked. Reach Level 30 to unlock it.",
+             "エンチャントメントスロットはロックされています。レベル30で解放されます。"),
+            ("Each time you Summon a Conjuration that isn't a Familiar, you have a 25% chance to Summon a Familiar of the same Element.",
+             "使い魔以外の召喚を行うたび、25%の確率で同属性の使い魔を1体召喚する。"),
+        ]:
+            with self.subTest(raw=raw):
+                matches = [(k, v) for k, v in merged.items() if re.fullmatch(k, raw)]
+                self.assertTrue(matches)
+                pattern, translation = matches[0]
+                replacement = re.sub(r"\$(\d+)", lambda m: rf"\g<{m[1]}>", translation)
+                self.assertEqual(re.sub(pattern, replacement, raw), expected)
+        for invalid in ("% of damage dealt as Bleed damage.", "Next Rank: anything", "Rank /",
+                        "This Enchantment Slot is locked. Reach Level to unlock it."):
+            self.assertFalse(any(re.fullmatch(k, invalid) for k in merged), invalid)
+
+    def test_class_mechanics_exclude_quest_and_placeholder_rows(self):
+        for file_name, key, text in [
+            ("PaladinOath", "OathAngelDescription", "This is the full description of the Oath of the Angel."),
+            ("PaladinOath", "Oath4Description", "Casting an {c_red}[PH]{/c} Angelic skill."),
+            ("DruidSpirit_Panel", "SpiritLore", "Lorem ipsum"),
+            ("DruidSpirit_Panel", "SpiritName", "{s1} Spirit"),
+            ("WeaponExpertise", "ExpertiseDescriptionLabel", "When using a {s1}:"),
+            ("WeaponExpertise", "TechniqueUnlockQuestTrack", "To unlock, complete {s1}."),
+            ("WarlockMechanic", "WarlockShardUnlockQuest", "To unlock, complete {s1}."),
+            ("RogueSpecializations", "UnlockRequirementTrack", "To unlock, complete {s1}."),
+        ]:
+            with self.subTest(file=file_name, key=key):
+                row = merge_tool.CsvRow((), file_name, key, text, 0)
+                self.assertIsNone(merge_tool.selected_category(row, merge_tool.DEFAULT_CATEGORIES))
+        # 将来、同じ行からPHが取り除かれた場合は取り込みを再開する。
+        self.assertTrue(merge_tool._is_class_mechanic_row(merge_tool.CsvRow(
+            (), "PaladinOath", "Oath4Description", "Casting a Disciple Skill grants Arbiter.", 0)))
+
+    def test_book_of_the_dead_descriptions_and_separate_tag_lines(self):
+        fixture = self.local_fixture_dir()
+        en_path, ja_path = (fixture / f"s15_minions_{lang}.csv" for lang in ("en", "ja"))
+        merged, report = merge_tool.merge_csv_files(en_path, ja_path, {})
+        self.assertEqual(report["selected_by_category"]["minions"], 23)
+        with en_path.open(encoding="utf-8", newline="") as stream:
+            en_rows = {r["Key"]: r for r in csv.DictReader(stream)}
+        with ja_path.open(encoding="utf-8", newline="") as stream:
+            ja_rows = {r["Key"]: r for r in csv.DictReader(stream)}
+        for unit in ("Warrior", "Mage", "Golem"):
+            for spec in range(1, 4):
+                key = f"{unit}Spec{spec}_Desc"
+                en = merge_tool.clean_color_tags(en_rows[key]["Translation"])
+                ja = merge_tool.clean_color_tags(ja_rows[key]["Translation"])
+                for raw, expected in [(en, ja), *zip(en.splitlines(), ja.splitlines())]:
+                    if not raw.strip():
+                        continue
+                    with self.subTest(key=key, raw=raw):
+                        self.assertTrue(any(
+                            re.fullmatch(pattern, raw) and translated == expected
+                            for pattern, translated in merged.items()
+                        ))
+        self.assertEqual(merged[r"Book\s+of\s+the\s+Dead"], "死者の書")
+        self.assertEqual(merged["Upgrades"], "強化")
+        for key in ("UnitCombinedName", "NoPassive_Desc", "UnitLockedQuest"):
+            r = en_rows[key]
+            row = merge_tool.CsvRow((), r["FileName"], key, r["Translation"], 0)
+            self.assertIsNone(merge_tool.selected_category(row, merge_tool.DEFAULT_CATEGORIES))
+
     def test_cube_material_names_are_imported_without_icons(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, report = merge_tool.merge_csv_files(
             fixture / "s15_cube_material_names_en.csv", fixture / "s15_cube_material_names_ja.csv", {})
         self.assertEqual(report["selected_by_category"]["items"], 9)
@@ -32,7 +176,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertFalse(any("{icon:" in k or "{icon:" in v for k, v in merged.items()))
 
     def test_all_gem_quality_names_are_imported(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, report = merge_tool.merge_csv_files(
             fixture / "s15_gem_names_en.csv", fixture / "s15_gem_names_ja.csv", {})
         self.assertEqual(report["selected_by_category"]["items"], 64)
@@ -48,7 +192,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertEqual(merged["The Empyrean Eye"], "最高天の眼")
 
     def test_prism_tooltip_descriptions_and_flavors(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, report = merge_tool.merge_csv_files(
             fixture / "s15_prism_tooltips_en.csv", fixture / "s15_prism_tooltips_ja.csv", {})
         self.assertEqual(report["selected_by_category"]["prism-descriptions"], 8)
@@ -65,7 +209,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertFalse(any("{icon:" in k or "{icon:" in v for k, v in merged.items()))
 
     def test_prism_names_ignore_icons_and_support_plurals(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, _ = merge_tool.merge_csv_files(
             fixture / "s15_prism_names_en.csv", fixture / "s15_prism_names_ja.csv", {})
         names = {"Aggressive": "攻撃的な", "Protector's": "守護者の", "Resourceful": "豊穣な",
@@ -78,7 +222,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
         self.assertFalse(any("{icon:" in key or "{icon:" in value for key, value in merged.items()))
 
     def test_season_prefixed_runes_and_common_article_filter(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, report = merge_tool.merge_csv_files(
             fixture / "s15_new_runes_en.csv", fixture / "s15_new_runes_ja.csv", {})
         for name, expected in {"Tir": "ティア", "Eth": "エス", "Ith": "イス", "Ral": "ラル",
@@ -96,7 +240,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             self.assertTrue(any(re.fullmatch(pattern, raw) for pattern in merged), raw)
 
     def test_resource_regeneration_expands_csv_resource_names(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, _ = merge_tool.merge_csv_files(
             fixture / "s15_resource_regeneration_en.csv",
             fixture / "s15_resource_regeneration_ja.csv", {}
@@ -114,7 +258,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             self.assertIn(expected, matches)
 
     def test_seal_effects_set_names_and_slot_counts_are_imported(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, report = merge_tool.merge_csv_files(
             fixture / "s15_seal_en.csv", fixture / "s15_seal_ja.csv", {}
         )
@@ -137,7 +281,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
             self.assertIn(japanese, matched, english)
 
     def soul_splinter_fixture(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         return merge_tool.merge_csv_files(fixture / "s15_soul_splinters_en.csv",
                                           fixture / "s15_soul_splinters_ja.csv", {})
 
@@ -171,7 +315,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                 self.assertEqual(value, "物理耐性+$1")
 
     def socketable_pair(self, name):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         en_rows, _ = merge_tool.load_csv(fixture / "s15_socketables_en.csv")
         ja_rows, _ = merge_tool.load_csv(fixture / "s15_socketables_ja.csv")
         row = next(row for row in en_rows.values() if row.key == "S15_Socketable_" + name)
@@ -218,7 +362,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
 
     def test_azmodan_correction_does_not_override_changed_sources(self):
         from dataclasses import replace
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         en, _ = merge_tool.load_csv(fixture / "s15_socketables_en.csv")
         ja, _ = merge_tool.load_csv(fixture / "s15_socketables_ja.csv")
         row = next(row for row in en.values() if row.key == "S15_Socketable_Azmodan")
@@ -233,7 +377,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                          "最大ライフ+$1、最大リソースが$2減少。")
 
     def test_socketable_import_has_only_numeric_capture_references(self):
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         merged, report = merge_tool.merge_csv_files(
             fixture / "s15_socketables_en.csv", fixture / "s15_socketables_ja.csv", {})
         self.assertEqual(len(merged), 9)
@@ -251,7 +395,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
 
     def test_skarn_term_alias_requires_unambiguous_emphasis(self):
         from dataclasses import replace
-        fixture = Path(__file__).parent / "fixtures"
+        fixture = self.local_fixture_dir()
         en, _ = merge_tool.load_csv(fixture / "s15_socketables_en.csv")
         ja, _ = merge_tool.load_csv(fixture / "s15_socketables_ja.csv")
         row = next(row for row in en.values() if row.key == "S15_Socketable_Skarn")

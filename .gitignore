@@ -1,6 +1,11 @@
 # Temporary files
 temp/
 tmp/
+# Third-party CSV extracts and captured DOM are local inspection inputs only.
+tools/fixtures/*.csv
+tools/fixtures/maxroll_*.html
+tools/fixtures/maxroll_*.json
+tools/fixtures/hellguard_csv_markup.html
 *.tmp
 *.temp
 

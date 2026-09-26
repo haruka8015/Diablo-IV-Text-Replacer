@@ -38,6 +38,7 @@ PLAYER_SKILL_POWER_PREFIXES = tuple(
         "Paladin",
         "Rogue",
         "Sorcerer",
+        "X1_Sorcerer",
         "Spiritborn",
         "Warlock",
         "pal",
@@ -53,9 +54,12 @@ TOOLTIP_TEXT_CATEGORIES = {
     "runes",
     "skill-tags",
     "skills",
+    "minions",
+    "class-mechanics",
     "weapon-tooltip",
 }
 DROP_SOURCE_KEY_PREFIX = "__D4T_DROP_SOURCE__:"
+STYLED_TERM_KEY_PREFIX = "__D4T_STYLED_TERM__:"
 COLOR_TAG_RE = re.compile(
     r"\{/?c(?:_\w+|:[0-9A-Fa-f]{6,8})?\}",
     flags=re.IGNORECASE,
@@ -73,6 +77,7 @@ D4_VALUE_TOKEN_RE = re.compile(
     r"SF_[^{}\r\n]+"
     r"|payload:[^{}\r\n]+"
     r"|dot:[^{}\r\n]+"
+    r"|shield:[^{}\r\n]+"
     r"|buffduration:[^{}\r\n]+"
     r"|Resource\s+Cost"
     r"|Combat\s+Effect\s+Chance"
@@ -135,6 +140,49 @@ class Rule:
 
 def _is_soul_splinter_file(file_name: str) -> bool:
     return bool(re.match(r"^Item_S\d+_SoulSplinter_", file_name))
+
+
+def _is_class_mechanic_row(row: CsvRow) -> bool:
+    """クラス固有UIの攻略用語と説明。操作・クエスト・開発用ダミーは除く。"""
+    if re.search(r"\[PH\]|Lorem ipsum", row.translation, re.IGNORECASE):
+        return False
+    if row.file_name == "WeaponExpertise":
+        return bool(re.fullmatch(
+            r"Expertise(?:Axe[12]Hand|Mace[12]Hand|Sword[12]Hand|Shield|Polearm)(?:Desc)?",
+            row.key,
+        )) or row.key in {
+            "WeaponExpertiseHeader", "TechniqueHeader", "TechniqueDesc", "TechniqueLabel",
+            "ArsenalDualWield", "ArsenalBludgeoning", "ArsenalSlicing",
+            "TechniqueDescriptionLabel", "ExpertiseRankTooltip", "NextRank",
+        }
+    if row.file_name == "PaladinOath":
+        return row.key == "OathsTitle" or bool(re.fullmatch(r"Oath[1-4](?:Name|Description|Flavor)", row.key))
+    keys_by_file = {
+        "DruidSpirit_Panel": {
+            "MajorSkill", "MinorSkill", "AssignSkills", "AssignSkillsDescription",
+            "Spirit_Snake", "Spirit_Wolf", "Spirit_Eagle", "Spirit_Deer",
+            "SpiritBonding", "BondingInfo", "BondingInfo_Short", "BondingInfo_Unlocked",
+        },
+        "RogueSpecializations": {"SpecializationsHeader"},
+        "SkillsUI": {"EnchantTitle", "EnchantSlotLocked", "EnchantSlotAvailable"},
+        "UIToolTips": {"SkillSectionHeader_Enchant"},
+        "SpiritbornMechanic": {
+            "ClassMechanicHeader", "ClassMechanicBody", "PassiveSlotLevel15", "PassiveSlotLevel30",
+            "Jaguar", "Eagle", "Gorilla", "Centipede", "PassiveSkill",
+            "Resilient", "Aggressive", "Debilitating", "Precise",
+        },
+        "WarlockMechanic": {
+            "WarlockHeader", "WarlockLegion", "WarlockVanguard", "WarlockRitualist", "WarlockManipulator",
+            "SummonTooltip_Legion", "SummonTooltip_Vanguard", "SummonTooltip_Manipulator", "SummonTooltip_Ritualist",
+        },
+        # 拡張パックのプレフィックス付きで通常のPower_Sorcerer_*に含まれない。
+        "Power_X1_Sorcerer_Familiar_Enchantment": {"desc"},
+        "Actor_Warlock_Legion_pet": {"Name"},
+        "Actor_Warlock_Mastermind_Pet_Emitter": {"Name"},
+        "Actor_Warlock_Ritualist_Pet": {"Name"},
+        "Actor_Warlock_Vanguard_pet": {"Name"},
+    }
+    return row.key in keys_by_file.get(row.file_name, ())
 
 
 def _is_legacy_item_file(file_name: str) -> bool:
@@ -429,7 +477,8 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                     row.file_name.startswith(("Skill_", "SkillTree_"))
                     or row.file_name == "SkillTagNames"
                     or (
-                        (row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES)
+                        ((row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES)
+                          and row.file_name != "Power_X1_Sorcerer_Familiar_Enchantment")
                          or bool(re.match(r"^Power_S\d+_Triad[A-C]_Player_", row.file_name)))
                         and (
                             row.key.lower() in {"desc", "rankup_desc"}
@@ -437,6 +486,27 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                         )
                     )
                 ),
+            ),
+        ),
+        (
+            "minions",
+            Rule(
+                "minions",
+                "死者の書のミニオン名・基本説明・見出し",
+                lambda row: row.file_name == "NecromancerArmy"
+                and (
+                    bool(re.fullmatch(r"(?:Warrior|Mage|Golem)Spec[1-3]_(?:Desc|Label)", row.key))
+                    or row.key in {"ArmyHeader", "Upgrades", "UnitTypeSacrifice"}
+                    or row.key.startswith("ActionBarIndicator_Tooltip_")
+                ),
+            ),
+        ),
+        (
+            "class-mechanics",
+            Rule(
+                "class-mechanics",
+                "武器熟練度・精霊の恩恵・専門化・エンチャント・精霊の広間・誓い・ソウルシャード",
+                _is_class_mechanic_row,
             ),
         ),
         (
@@ -825,6 +895,53 @@ def create_d4_description_pairs(
                 japanese_variant,
             )
     return pairs
+
+
+def create_styled_term_pairs(english: str, japanese: str) -> list[tuple[str, str]]:
+    """対応する効果文から装飾語の訳を得る。数値参照で対応が確定する区間だけ使う。"""
+    plain_term = re.compile(r"\{c_important\}([^{}]+)\{/c\}")
+    en_lines = [line for line in english.splitlines() if line.strip()]
+    ja_lines = [line for line in japanese.splitlines() if line.strip()]
+    if len(en_lines) != len(ja_lines):
+        return []
+    pairs = set()
+
+    def add_single(en: str, ja: str) -> None:
+        left, right = plain_term.findall(en), plain_term.findall(ja)
+        if len(left) == len(right) == 1 and re.fullmatch(r"[A-Za-z][A-Za-z '’-]*", left[0]):
+            if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", right[0]):
+                pairs.add((STYLED_TERM_KEY_PREFIX + left[0], right[0]))
+
+    def intervals(text: str) -> dict[tuple[str, str], str]:
+        tokens = list(D4_VALUE_TOKEN_RE.finditer(text))
+        result = {}
+        duplicates = set()
+        for index in range(len(tokens) + 1):
+            previous = tokens[index - 1] if index else None
+            following = tokens[index] if index < len(tokens) else None
+            key = (_d4_value_token_id(previous[0]) if previous else "^",
+                   _d4_value_token_id(following[0]) if following else "$")
+            if key in result:
+                duplicates.add(key)
+            result[key] = text[previous.end() if previous else 0:following.start() if following else len(text)]
+        return {key: value for key, value in result.items() if key not in duplicates}
+
+    for en, ja in zip(en_lines, ja_lines):
+        add_single(en, ja)
+        left, right = intervals(en), intervals(ja)
+        for key in left.keys() & right.keys():
+            add_single(left[key], right[key])
+    return sorted(pairs)
+
+
+def create_class_mechanic_pairs(en_row: CsvRow, ja_row: CsvRow) -> list[tuple[str, str]]:
+    # 選択した固有UIの{sN}は割合・レベル・ランクの数値のみ。
+    # 通常の説明生成でタグとして消したり、任意の英文に一致させたりしない。
+    def numeric_tokens(text: str) -> str:
+        return re.sub(r"\{s(\d+)\}", r"{SF_CLASS_VALUE_\1}", text)
+    return create_d4_description_pairs(
+        numeric_tokens(en_row.translation), numeric_tokens(ja_row.translation)
+    )
 
 
 def create_paragon_tooltip_ui_pairs(
@@ -1479,6 +1596,8 @@ def merge_csv_files(
                 if category == "weapon-tooltip"
                 else create_rune_tooltip_pairs(en_row, ja_row)
                 if category == "runes"
+                else create_class_mechanic_pairs(en_row, ja_row)
+                if category == "class-mechanics"
                 else create_flavor_description_pairs(
                     en_row.translation, ja_row.translation
                 )
@@ -1536,11 +1655,23 @@ def merge_csv_files(
                     else:
                         pairs.append((alias_key, alias_value))
 
+        if en_row.file_name.startswith("Power_Warlock_ClassMechanic_") and en_row.key == "desc":
+            pairs.extend(create_styled_term_pairs(en_row.translation, ja_row.translation))
+        if en_row.file_name == "SkillTagNames" and en_row.key == "SKILL_TAG_COLD":
+            # 装備接辞などの同名単語の既存訳を保持し、Tooltip全文の装飾には
+            # スキル分類としての公式訳も使えるようにする。
+            tag_key, tag_value, tag_rejection = make_translation_pair(en_row.translation, ja_row.translation)
+            if not tag_rejection:
+                pairs.append((STYLED_TERM_KEY_PREFIX + tag_key, tag_value))
+
         for candidate_key, candidate_value in pairs:
             if candidate_key in conflicts:
                 stats["conflict-row"] += 1
                 continue
             previous = candidates.get(candidate_key)
+            if previous and candidate_key.startswith(STYLED_TERM_KEY_PREFIX):
+                candidates[candidate_key] = ("\n".join(sorted(set(previous[0].splitlines() + [candidate_value]))), category)
+                continue
             if previous and previous[0] != candidate_value:
                 # Eagle等は装備のランダム名断片にも存在する。攻略用語として
                 # 明示されたスキルタグを、CSVの並び順によらず優先する。

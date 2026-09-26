@@ -1,9 +1,0 @@
-SNO,FileName,Index,KeyHash,Key,Translation
-2533711,Item_X2_HoradricCube_TuningStone_1,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}攻撃的な同調プリズム"
-2533714,Item_X2_HoradricCube_TuningStone_2,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}守護者の同調プリズム"
-2533717,Item_X2_HoradricCube_TuningStone_3,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}豊穣な同調プリズム"
-2533719,Item_X2_HoradricCube_TuningStone_4,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}実用的な同調プリズム"
-2533722,Item_X2_HoradricCube_TuningStone_5,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}色彩豊かな同調プリズム"
-2533726,Item_X2_HoradricCube_TuningStone_6,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}熟達者の同調プリズム"
-2533730,Item_X2_HoradricCube_TuningStone_7,0,4062401,Name,"{icon:Transfiguration, 2}無秩序な同調プリズム"
-2533732,Item_X2_HoradricCube_TuningStone_8,0,4062401,Name,"{icon:Transfiguration, 2}クーレの同調プリズム"

@@ -2,6 +2,12 @@
 
 このディレクトリには、translations.json を管理するためのPythonツールが含まれています。
 
+第三者のCSV抜粋・取得DOMはGitに追加せず、`tmp/local-fixtures/` に保存します。
+通常のPythonテストでは実資料依存の検証をスキップします。手元の資料で検証する場合だけ
+`D4T_LOCAL_FIXTURES=1` を設定してください。ブラウザの通常テストは
+`test_content_tooltip_dom.html`（自作データ）、実DOM検証は
+`test_content_local_tooltip_dom.html`（ローカル資料が必要）です。
+
 ## シーズン更新の手順
 
 同じ6列の TSV なら既存ツールで CSV に変換できます。ただし、新しいアイテム系列や
@@ -117,7 +123,7 @@ python tools/merge_csv_translations.py output.json \
 ```
 
 既定カテゴリは
-`attributes,drop-sources,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,prism-descriptions,flavors,rare-names,powers,paragon,skill-tags,skills` です。
+`attributes,drop-sources,weapon-tooltip,tooltip-labels,runes,items,affixes,effects,prism-descriptions,flavors,rare-names,powers,paragon,skill-tags,skills,minions,class-mechanics` です。
 
 `prism-descriptions` は同調プリズムの用途・使用条件・入手元を変換します。
 `Item_X2_HoradricCube_TuningStone_*` の名前は `items`、フレーバーは `flavors` で取り込みます。
@@ -141,6 +147,26 @@ S15 CSVの `S15_Socketable_Azmodan` は日本語側がAndarielの文になって
 いずれも一つの数値として保持します。Maxroll独自の短縮ラベルは正式名とは別の表記です。
 `skill-tags` は `SkillTags` のタグ名と注釈本文を変換します。長い注釈ルールは
 装備Tooltip内だけで照合されます。
+`minions` は `NecromancerArmy` の死者の書の見出し、全9種のミニオン名・基本説明、
+アクションバーの説明を取り込みます。基本説明とスキル属性の注記は行単位の規則も
+生成し、Maxrollで別要素に分かれた表示にも対応します。操作用テンプレートやクエスト文は除外します。
+`class-mechanics` は他7職の固有システムの名前・見出し・説明を取り込みます。
+対象は `WeaponExpertise`、`DruidSpirit_Panel`、`RogueSpecializations`、
+`SkillsUI` / `UIToolTips` のエンチャント行、`SpiritbornMechanic`、`PaladinOath`、
+`WarlockMechanic` の選択した行です。使い魔のエンチャント説明
+`Power_X1_Sorcerer_Familiar_Enchantment.desc` も含みます。
+割合・レベル・ランクの `{sN}` は数値として保持し、数値が抜けた規則を生成しません。
+`[PH]` 等の開発用仮文、クエスト文、文字列を受け取る操作用テンプレートは対象外です。
+既存の `Power_<クラス名>_*` にある固有効果は引き続き `skills` で扱います。
+ウォーロックのシャード・断片の効果文では、単語名と文中の訳が異なることがあります。
+`skills` は英日CSVの対応行から、装飾語が1つだけの行、または同じ数値参照に挟まれた
+一意な区間の装飾語を抽出し、`__D4T_STYLED_TERM__:` に文中の訳候補を保存します。
+これは通常の置換規則から除外し、Tooltip全文の装飾位置を決める際にだけ使います。
+候補が複数一致する場合は位置を推測しません。召喚悪魔4種の名前は `class-mechanics` で扱います。
+ソーサラーの `SkillsUI.EnchantTitle`（複数形の Enchantments）も固有UIに含みます。
+`Power_X1_Sorcerer_*` の説明・モディファイアもスキル対象です。障壁量の
+`{shield:...}` は可変値として保持します。Frostは接辞の既存訳を変更せず、
+`SkillTagNames.SKILL_TAG_COLD` の公式スキル分類訳を全文装飾用候補に追加します。
 `skills` はクラススキル名に加え、`Power_<クラス名>_*` の基本説明・強化説明を
 Maxroll のスキルTooltip向け全文ルールへ変換します。`{payload:...}` などの
 可変値と、Maxroll が付加する `x [Damage]` / `[262.5%]` 表示も保持します。

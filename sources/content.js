@@ -51,6 +51,7 @@ const DROP_SOURCE_KEY_PREFIX = '__D4T_DROP_SOURCE__:';
 const SPLINTER_LABEL_SELECTOR =
   '[class*="equipment_Equipment__seasonal__"] [class*="equipment_Equipment__runeName__"]';
 const SPLINTER_LABEL_KEY_PREFIX = '__D4T_SPLINTER_LABEL__:';
+const STYLED_TERM_KEY_PREFIX = '__D4T_STYLED_TERM__:';
 const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
 const MAXROLL_INTERACTIVE_PARAGON_SELECTOR =
   '[class*="_D4PlannerPageParagon__embed_"]';
@@ -125,6 +126,7 @@ chrome.storage.sync.get(
 
     let dropSourceTranslations = new Map();
     let splinterLabelTranslations = new Map();
+    let styledTermTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
     let compiledPatternIndex = null;
@@ -216,8 +218,16 @@ chrome.storage.sync.get(
             translationRegexCache.clear();
             dropSourceTranslations = new Map();
             splinterLabelTranslations = new Map();
+            styledTermTranslations = new Map();
             const translationEntries = [];
             Object.entries(data).forEach(([pattern, replacement]) => {
+              if (pattern.startsWith(STYLED_TERM_KEY_PREFIX)) {
+                styledTermTranslations.set(
+                  pattern.slice(STYLED_TERM_KEY_PREFIX.length).toLocaleLowerCase('en-US'),
+                  replacement.split('\n').filter(Boolean)
+                );
+                return;
+              }
               if (pattern.startsWith(SPLINTER_LABEL_KEY_PREFIX)) {
                 splinterLabelTranslations.set(
                   pattern.slice(SPLINTER_LABEL_KEY_PREFIX.length).toLocaleLowerCase('en-US'),
@@ -1305,6 +1315,9 @@ chrome.storage.sync.get(
       // 単独置換の優先訳と全文中の訳が異なる場合、同じ語句に完全一致する
       // 辞書規則から対応先を探す。部分一致や汎用ワイルドカードは採用しない。
       const candidates = new Set();
+      for (const value of styledTermTranslations.get(originalText.toLocaleLowerCase('en-US')) || []) {
+        if (translatedSentence.includes(value)) candidates.add(value);
+      }
       for (const pattern of selectCompiledPatterns(
         originalText, compiledPatterns, compiledPatternIndex
       )) {
@@ -1468,6 +1481,17 @@ chrome.storage.sync.get(
         const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT);
         const ordinalMatch = textNode.nodeValue.match(DYNAMIC_ORDINAL_TEXT);
         let value = dynamicMatch?.[1] || ordinalMatch?.[1] || null;
+        // 注記を内包する数値spanでは括弧も同じspanに保持する。
+        // (36% <span> x [HP]</span>) の閉じ括弧を文章の書き込み先にしない。
+        const annotatedText = textNode.parentElement?.matches('.d4-color-number')
+          ? textNodes.filter(node => textNode.parentElement.contains(node)).map(node => node.nodeValue).join('') : '';
+        const annotatedNumber = /^\(.+\)$/.test(annotatedText) &&
+          textNode.parentElement.querySelector('.d4-color-lightgray,.d4-color-inactive') &&
+          newText.includes(annotatedText);
+        if (annotatedNumber && /^\s*\)\s*$/.test(textNode.nodeValue)) return;
+        if (annotatedNumber && dynamicMatch && /^\s*\(/.test(textNode.nodeValue)) {
+          value = annotatedText;
+        }
 
         if (!value && isTooltipSentence && isStyledTextNode(textNode)) {
           const originalStyledText = textNode.nodeValue.trim();
@@ -1586,9 +1610,11 @@ chrome.storage.sync.get(
         }
         anchors.push({
           nodeIndex,
+          endNodeIndex: annotatedNumber ? textNodes.findLastIndex(node => textNode.parentElement.contains(node)) : nodeIndex,
+          retainedValue: annotatedNumber ? textNode.nodeValue : null,
           value,
           valuePosition,
-          wrapped: Boolean(wrappedPrefixNode(textNode)),
+          wrapped: !annotatedNumber && Boolean(wrappedPrefixNode(textNode)),
           prefixNode: wrappedPrefixNode(textNode)
         });
         occupiedAnchorRanges.push({
@@ -1612,7 +1638,7 @@ chrome.storage.sync.get(
 
       function writeAnchorValue(anchor) {
         const anchorNode = textNodes[anchor.nodeIndex];
-        anchorNode.nodeValue = anchor.value;
+        anchorNode.nodeValue = anchor.retainedValue ?? anchor.value;
         if (!anchor.wrapped) {
           return;
         }
@@ -1663,7 +1689,7 @@ chrome.storage.sync.get(
           }
           const segment = newText.slice(textPosition, anchor.valuePosition);
           const hasRoom = segment.length === 0 || anchor.nodeIndex > nodePosition;
-          nodePosition = anchor.nodeIndex + 1;
+          nodePosition = anchor.endNodeIndex + 1;
           textPosition = anchor.valuePosition + anchor.value.length;
           return hasRoom;
         }) &&
@@ -1682,7 +1708,7 @@ chrome.storage.sync.get(
             newText.slice(textPosition, anchor.valuePosition)
           );
           writeAnchorValue(anchor);
-          nodePosition = anchor.nodeIndex + 1;
+          nodePosition = anchor.endNodeIndex + 1;
           textPosition = anchor.valuePosition + anchor.value.length;
         });
         writeSegment(nodePosition, textNodes.length, newText.slice(textPosition));

@@ -26,6 +26,39 @@ function runContentWildcardTests(api) {
     equal(text, expected, 'repeated pass ' + pass);
   }
   const itemLabelCases = [
+    ['Weapon Expertise', '武器の専門知識'],
+    ['Spirit Boons', '精霊の恩恵'],
+    ['Specializations', 'カテゴリー'],
+    ['Enchantment Effect', 'エンチャントメントの効果'],
+    ['Spirit Hall', '精霊の広間'],
+    ['Oaths', '誓約'],
+    ['Soul Shards', 'ソウル・シャード'],
+    ['12.5% of damage dealt as Bleed damage.', 'ダメージの12.5%を流血ダメージとして与える。'],
+    ['Killing an enemy grants +8.5% Attack Speed for 2 seconds.', '敵をキルすると2秒間、攻撃速度が8.5%上昇する。'],
+    ['You have a 7.5% chance to generate 3 Fury when hitting a crowd controlled enemy.',
+     '行動制御効果を受けた敵に攻撃を当てると7.5%の確率で怒気3を得る。'],
+    ['Rank 3/10', 'ランク 3/10'],
+    ['Next Rank: 4', '次ランク: 4'],
+    ['This Enchantment Slot is locked. Reach Level 30 to unlock it.',
+     'エンチャントメントスロットはロックされています。レベル30で解放されます。'],
+    ["Each time you Summon a Conjuration that isn’t a Familiar, you have a 25% chance to Summon a Familiar of the same Element.",
+     '使い魔以外の召喚を行うたび、25%の確率で同属性の使い魔を1体召喚する。'],
+    ['You can pick a Passive Skill for both the Spirit slots.', '精霊のスロットの両方にパッシブ・スキルを選択できます。'],
+    ["Grants the Summon Ae'grom skill.", 'アエ=グロム召喚スキルを付与する。'],
+    ['Grants the Summon Abodian skill.', 'アヴォディアン召喚スキルを付与する。'],
+    ['Grants the Summon Laalish skill.', 'スキル「ラアリシュ召喚」を付与する。'],
+    ['Grants the Summon Valloch skill.', 'スキル「ヴァロク召喚」を付与する。'],
+    ['Casting a Juggernaut Skill consumes a stack of Resolve to deal 20% more damage.',
+     '重装者スキルを使用すると決意の蓄積が1消費されてダメージが20%増加する。'],
+    ['Book of the Dead', '死者の書'],
+    ['UPGRADES', '強化'],
+    ['Reapers wield a powerful cleaving scythe and have a wind-up attack that deals heavy damage every 10 seconds.',
+     'リーパーは強力な鎌で敵を切り裂き、10秒ごとに強力な振りかぶり攻撃で大ダメージを与える。'],
+    ['Shadow Mages wield power from the beyond, firing bursting shadow bolts.',
+     'シャドウ・メイジが死後の世界の力を振るい、爆発するシャドウ・ボルトを撃つ。'],
+    ['Skeleton Warrior is also a Bone Skill.', 'スケルトンウォーリアが骨スキルの性質を併せ持つようになる。'],
+    ['Skeleton Warrior is also a Darkness Skill.', 'スケルトンウォーリアが闇スキルの性質を併せ持つようになる。'],
+    ['Skeleton Mage is also a Darkness Skill.', 'スケルトンメイジが闇スキルの性質を併せ持つようになる。'],
     ...Object.entries({Raw: '未加工の', Coarse: '荒い', Refined: '精製された', Volatile: '不安定な',
       Pure: '純粋な', Enhanced: '強化された', Attuned: '調和の取れた', Resonant: '共鳴する'}).map(
       ([prefix, ja]) => ['25x ' + prefix + ' Primordial Dust', '25x ' + ja + '原初の塵']),
@@ -138,11 +171,15 @@ if (typeof require !== 'undefined' && require.main === module) {
       fetch: async () => ({ok: true, json: async () => ({
         'Test\\s+Term': '第一訳', 'Test Term': '第二訳',
         'Test (.*?)': '汎用訳', "Hero's": '所有格訳',
+        '__D4T_STYLED_TERM__:Context Term': '文脈訳\n別の文脈訳',
       })}),
     };
     vm.runInNewContext(testSource, styledSandbox);
     await styledSandbox.window.api.loadTranslations();
     const styledCases = [
+      ['Context Term', '文脈訳を使う。', '文脈訳'],
+      ['Context Term', '文脈訳と別の文脈訳を使う。', null],
+      ['Context Term', '対応しない文章。', null],
       ['Test Term', '第二訳を使用する。', '第二訳'],
       ['Test Term', '第一訳を使用する。', '第一訳'],
       ['Test Term', '第一訳と第二訳を使用する。', null],
@@ -157,6 +194,7 @@ if (typeof require !== 'undefined' && require.main === module) {
     if (sandbox.window.api.findStyledTranslationInSentence('The Protector', '〈守護者〉は離れた場所に召喚できる。') !== '守護者') throw new Error('Protector full-sentence candidate');
     if (sandbox.window.api.applyRegexTransformations('The Protector', []) !== '庇護者') throw new Error('Protector ordinary translation changed');
     console.log({styledTermChecks: styledCases.length + 2});
+    if (styledSandbox.window.api.applyRegexTransformations('Context Term', []) !== 'Context Term') throw new Error('styled metadata leaked into ordinary replacement');
     // Maxroll S15_SeasonalSocketable全8系統。装備欄は英語名の末尾語を表示する。
     const labelCases = [
       ['Soulstone', 'ソウルストーン'], ['Anguish', '苦悶'], ['Pain', '苦痛'],

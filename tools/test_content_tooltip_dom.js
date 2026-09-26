@@ -1,4 +1,101 @@
 // Browser DOM tests; see test_content_tooltip_dom.html for the standalone runner.
+function runContentSorcererTooltipDomTests(api, table, fixtures) {
+  let passed = 0;
+  const check = (condition, name) => {
+    if (!condition) throw new Error('Sorcerer: ' + name);
+    passed++;
+  };
+  for (const {name, html} of fixtures) {
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const elements = [...host.querySelectorAll('*')];
+    const numbers = [...host.querySelectorAll('.d4-color-number')].map(e => [e, e.textContent]);
+    const links = [...host.querySelectorAll('.d4-style-u')];
+    let clicks = 0;
+    links.forEach(e => e.addEventListener('click', () => clicks++));
+    api.replaceText(host, table);
+    check(!/[A-Za-z]{2,}/.test(host.textContent.replace(/\[(Damage|HP)\]/g, '')), name + ': English remained: ' + host.textContent);
+    check(elements.every(e => host.contains(e)), name + ': elements retained');
+    check(numbers.every(([e, text]) => e.textContent === text), name + ': numeric values retained: ' + JSON.stringify(numbers.filter(([e, text]) => e.textContent !== text).map(([e,text]) => [text,e.textContent])));
+    links.forEach(e => e.click());
+    check(clicks === links.length, name + ': listeners retained');
+    const htmlAfter = host.innerHTML;
+    api.replaceText(host, table);
+    check(host.innerHTML === htmlAfter, name + ': repeated replacement');
+  }
+  check(api.applyRegexTransformations('Enchantments', []) === 'エンチャントメント', 'plural heading');
+  check(api.applyRegexTransformations('Frost', []) === '寒気をまとう', 'ordinary affix unchanged');
+  check(api.findStyledTranslationInSentence('Frost', '凍結スキルになり') === '凍結', 'skill tag in sentence');
+  return {passed};
+}
+
+function runContentWarlockTooltipDomTests(api, table, fixtures) {
+  let passed = 0;
+  const check = (condition, name) => {
+    if (!condition) throw new Error('Warlock: ' + name);
+    passed++;
+  };
+  for (const {name, html} of fixtures) {
+    const host = document.createElement('div');
+    host.innerHTML = html;
+    const elements = [...host.querySelectorAll('*')];
+    const values = [...host.querySelectorAll('.d4-color-number')].map(e => [e, e.textContent]);
+    const underlines = [...host.querySelectorAll('.d4-style-u')];
+    let clicks = 0;
+    underlines.forEach(e => e.addEventListener('click', () => clicks++));
+    api.replaceText(host, table);
+    const description = host.querySelector('.d4t-description');
+    check(!/[A-Za-z]{2,}/.test(description.textContent.replaceAll('[Damage]', '')), name + ': English remained: ' + description.textContent);
+    check(elements.every(e => host.contains(e)), name + ': elements retained');
+    check(values.every(([e, value]) => e.textContent === value), name + ': numeric values retained');
+    underlines.forEach(e => e.click());
+    check(clicks === underlines.length, name + ': listeners retained');
+    if (name === 'Ritualist Shard') {
+      check(description.textContent.includes('蓄積1ごとに10.5%[x]') && description.textContent.includes('蓄積2ごとに効果範囲が30%[+]'), 'Ritualist numeric order');
+      check([...host.querySelectorAll('.d4-color-important')].some(e => e.textContent === '邪教'), 'Occult style');
+    }
+    if (name === 'Mastermind Shard') check(description.querySelector('.d4-color-important').textContent === '再発動', 'Recast style');
+    const translated = host.innerHTML;
+    api.replaceText(host, table);
+    check(host.innerHTML === translated, name + ': repeated replacement');
+  }
+  check(api.applyRegexTransformations('Occult', []) === '狂信者', 'ordinary Occult unchanged');
+  check(api.applyRegexTransformations('Recast', []) === '再使用', 'ordinary Recast unchanged');
+  check(api.findStyledTranslationInSentence('Occult Hellfire', '邪教の業火スキル') === '邪教の業火', 'contextual compound candidate');
+  check(api.findStyledTranslationInSentence('Occult Hellfire', '邪教の業火と邪教業火') === null, 'ambiguous candidates rejected');
+  check(api.findStyledTranslationInSentence('Occult Hellfire', '無関係な説明') === null, 'unmatched candidates rejected');
+  return {passed};
+}
+
+function runContentMinionTooltipDomTests(api, table, fixtures) {
+  const descriptions = [
+    'リーパーは強力な鎌で敵を切り裂き、10秒ごとに強力な振りかぶり攻撃で大ダメージを与える。スケルトンウォーリアが闇スキルの性質を併せ持つようになる。',
+    'シャドウ・メイジが死後の世界の力を振るい、爆発するシャドウ・ボルトを撃つ。スケルトンメイジが闇スキルの性質を併せ持つようになる。',
+    'アイアン・ゴーレムは圧倒的な力で敵を気絶させ、標的の動きを制限する。ゴーレムが闇スキルの性質を併せ持つようになる。',
+  ];
+  let checks = 0;
+  const check = (condition, label) => {
+    if (!condition) throw new Error('Minion: ' + label);
+    checks++;
+  };
+  fixtures.forEach((fixture, index) => {
+    const host = document.createElement('div');
+    host.innerHTML = fixture;
+    const elements = [...host.querySelectorAll('*')];
+    const numbers = [...host.querySelectorAll('.d4t-description .d4-color-number')].map(e => [e, e.textContent]);
+    api.replaceText(host, table);
+    check(host.querySelector('.d4t-description').textContent.trim() === descriptions[index], 'complete description ' + index);
+    check(host.querySelector('.d4t-header').textContent === '強化', 'upgrade heading');
+    check(elements.every(e => host.contains(e)), 'original elements retained');
+    check(numbers.every(([e, text]) => e.textContent === text), 'description numeric values retained');
+    check(host.querySelectorAll('.d4-color-important')[1].textContent === '闇', 'styled skill tag retained');
+    const html = host.innerHTML;
+    api.replaceText(host, table);
+    check(host.innerHTML === html, 'repeated replacement stable');
+  });
+  return {checks};
+}
+
 function runContentTooltipDomTests(api, regexTable, fixture, sealFixture, skillFixtures, hellguardFixture) {
   let passed = 0;
   function check(condition, label) {
@@ -206,7 +303,7 @@ async function runContentPlannerTooltipDomTests(api, table, fixtures, sealFixtur
     document.body.append(host); // Real observer path, no direct replaceText call.
     await new Promise(resolve => setTimeout(resolve, 250));
     check(originals.every(node => tip.contains(node)), 'planner preserves original elements');
-    check(annotations.every(([node, text]) => node.textContent === text), 'planner preserves numeric annotations');
+    check(annotations.every(([node, text]) => node.textContent === text.replace('Item Contribution', '装備による加算')), 'planner preserves numeric annotations');
     check(modifiers.length > 0 || index === fixtures.length, 'planner modifier fixture present');
     for (const row of modifiers) {
       check(!/becomes|Skill|makes you|Each|enemies|Stagger|Brimstones|Fortifies/.test(row.textContent), 'planner full modifier translation: ' + row.textContent);

@@ -1,55 +1,52 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Tooltip DOM tests</title>
+<title>Self-authored tooltip DOM tests</title>
 <pre id="result">Running…</pre>
-<script src="test_content_tooltip_dom.js"></script>
-<script src="test_content_wildcards.js"></script>
-<script src="test_content_guide_terms.js"></script>
-<script src="test_content_resources.js"></script>
 <script>
 (async () => {
-  const [source, dictionary, fixture, sealFixture, ...skillFixtures] = await Promise.all([
-    fetch('../sources/content.js').then(r => r.text()),
-    fetch('../sources/translations.json').then(r => r.json()),
-    fetch('fixtures/maxroll_skarn_tooltip.html').then(r => r.text()),
-    fetch('fixtures/maxroll_seal_tooltip.html').then(r => r.text()),
-    ...['abodian', 'destruction_demon', 'skull_splitter', 'planner_meta', 'planner_sigil', 'planner_molten', 'planner_prison'].map(name =>
-      fetch(`fixtures/maxroll_${name}_tooltip.html`).then(r => r.text()))
-  ]);
-  new Function(source); // Syntax check of the complete content script.
-  const chromeStub = {
-    storage: {
-      onChanged: {addListener() {}},
-      sync: {get(keys, callback) {callback({enabled: true, guideTranslationEnabled: true});}}
-    },
-    runtime: {getURL(path) {return path;}}
+  // Sentences and markup below are authored solely for these tests.
+  const source = await fetch('../sources/content.js').then(r => r.text());
+  new Function(source);
+  const dictionary = {
+    'Test Gizmo': '試験装置', 'Sample': '見本',
+    '__D4T_STYLED_TERM__:Sample': '試験用',
+    'Test Gizmo creates a Sample object for (\\d+) seconds\\.': '試験装置が試験用の物体を$1秒間作る。',
+    'Test Gizmo stores (\\d+)% energy \\((\\d+)%\\) in a box\\.': '試験装置が$1%のエネルギー($2%)を箱に保存する。'
   };
-  // Keep the real definitions; omit automatic page observation and initialization.
+  const chrome = {storage: {onChanged: {addListener() {}}, sync: {get(k, cb) {cb({enabled: true});}}}, runtime: {getURL(p) {return p;}}};
   const prefix = source.slice(0, source.indexOf('    let debounceTimer;'));
-  const createApi = () => new Function('chrome', 'fetch', `let api;
-    ${prefix}
-    api = {loadTranslations, replaceText, applyRegexTransformations, observeDOM,
-      processMaxrollGuideRoot, translateGuideTextNodesInPlace, translateGuideSemanticElements, collectGuideBlocks,
-      getWildcardCaptureIndexes, hasUnsafeWildcardMatch, dynamicValue: DYNAMIC_VALUE_TEXT};
-    }}); return api;`)(chromeStub, async () => ({ok: true, json: async () => dictionary}));
-  const api = createApi();
+  const api = new Function('chrome', 'fetch', `let api; ${prefix}
+    api = {loadTranslations, replaceText, observeDOM}; }}); return api;`)(chrome, async () => ({ok: true, json: async () => dictionary}));
   const table = await api.loadTranslations();
-  const glyphFixture = await fetch('fixtures/maxroll_guide_glyph.html').then(r => r.text());
-  const cubeFixture = await fetch('fixtures/maxroll_cube_article.html').then(r => r.text());
-  const hellguardFixture = await fetch('fixtures/hellguard_csv_markup.html').then(r => r.text());
-  const heshaFixtures = await Promise.all(['link', 'equipment'].map(name =>
-    fetch(`fixtures/maxroll_hesha_${name}_tooltip.html`).then(r => r.text())));
-  window.testResult = {
-    resources: await runContentResourceTests(createApi, api, chromeStub, cubeFixture),
-    guide: await runContentGuideTermTests(api, table, chromeStub, glyphFixture),
-    dom: runContentTooltipDomTests(api, table, fixture, sealFixture, skillFixtures.slice(0, 3), hellguardFixture),
-    planner: await runContentPlannerTooltipDomTests(api, table, skillFixtures.slice(3), sealFixture),
-    hesha: await runContentHeshaTooltipDomTests(api, table, heshaFixtures),
-    text: runContentWildcardTests(api)
-  };
-  document.querySelector('#result').textContent = JSON.stringify(window.testResult, null, 2);
+  let passed = 0;
+  const check = (ok, name) => { if (!ok) throw new Error(name); passed++; };
+  const samples = [
+    ['<span class="d4-color-important">Test Gizmo</span> creates a <span class="d4-color-important">Sample</span> object for <span class="d4-color-number">7</span> seconds.', '試験装置が試験用の物体を7秒間作る。'],
+    ['<span class="d4-color-important">Test Gizmo</span> stores <span class="d4-color-number">12%</span> energy <span class="d4-color-number">(12%<span class="d4-color-lightgray"> x [HP]</span>)</span> in a box.', '試験装置が12%のエネルギー(12% x [HP])を箱に保存する。']
+  ];
+  api.observeDOM(table);
+  for (const automatic of [false, true]) for (const [html, expected] of samples) {
+    const tip = document.createElement('div');
+    tip.className = 'd4t-GameTooltip';
+    tip.innerHTML = '<div class="d4t-description">' + html + '</div>';
+    const elements = [...tip.querySelectorAll('*')];
+    const values = [...tip.querySelectorAll('.d4-color-number')].map(e => [e, e.textContent]);
+    let clicks = 0;
+    elements[1].addEventListener('click', () => clicks++);
+    if (automatic) { document.body.append(tip); await new Promise(r => setTimeout(r, 300)); }
+    else api.replaceText(tip, table);
+    check(tip.textContent === expected, 'Full sentence: ' + tip.textContent);
+    check(elements.every(e => tip.contains(e)), 'Original elements');
+    check(values.every(([e, text]) => e.textContent === text), 'Numeric annotation');
+    elements[1].click(); check(clicks === 1, 'Event listener');
+    const result = tip.innerHTML; api.replaceText(tip, table);
+    check(result === tip.innerHTML, 'Repeated replacement');
+    tip.remove();
+  }
+  window.testResult = {selfAuthored: {passed}};
+  document.querySelector('#result').textContent = JSON.stringify(window.testResult);
 })().catch(error => {
   window.testResult = {error: String(error), stack: error.stack};
-  document.querySelector('#result').textContent = JSON.stringify(window.testResult, null, 2);
+  document.querySelector('#result').textContent = JSON.stringify(window.testResult);
 });
 </script>
