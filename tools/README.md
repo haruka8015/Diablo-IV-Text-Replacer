@@ -235,6 +235,16 @@ python convert_stringlist_to_translations.py output.json --en temp/StringList_en
 }
 ```
 
+## VS Codeから配布用ZIPを作成
+
+`Ctrl+Shift+B`、または「ターミナル → タスクの実行 → 拡張機能: 配布用ZIPを作成」で
+`tools/build_extension.py` を実行します。manifestのバージョンに応じて
+`temp/Diablo_Translate_<version>.zip` を生成します。
+
+Windowsでは現在の開発環境のuv管理Pythonを `%APPDATA%/uv/python/cpython-3.10-windows-x86_64-none/python.exe`
+から起動します。別の環境では `.vscode/tasks.json` の `windows.command` を利用するPythonに合わせて変更してください。
+Windows以外ではPATH上の `python` を使用します。
+
 ## アーカイブされたツール
 
 以下のツールは `archive/` ディレクトリに移動されました。現在は convert_s9_to_translations.py がすべての機能を統合しています。
