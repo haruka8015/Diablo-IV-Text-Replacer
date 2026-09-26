@@ -5,6 +5,7 @@
 <script src="test_content_tooltip_dom.js"></script>
 <script src="test_content_wildcards.js"></script>
 <script src="test_content_guide_terms.js"></script>
+<script src="test_content_resources.js"></script>
 <script>
 (async () => {
   const [source, dictionary, fixture, sealFixture, ...skillFixtures] = await Promise.all([
@@ -25,15 +26,18 @@
   };
   // Keep the real definitions; omit automatic page observation and initialization.
   const prefix = source.slice(0, source.indexOf('    let debounceTimer;'));
-  const api = new Function('chrome', 'fetch', `let api;
+  const createApi = () => new Function('chrome', 'fetch', `let api;
     ${prefix}
     api = {loadTranslations, replaceText, applyRegexTransformations, observeDOM,
-      processMaxrollGuideRoot, translateGuideTextNodesInPlace, translateGuideSemanticElements,
+      processMaxrollGuideRoot, translateGuideTextNodesInPlace, translateGuideSemanticElements, collectGuideBlocks,
       getWildcardCaptureIndexes, hasUnsafeWildcardMatch, dynamicValue: DYNAMIC_VALUE_TEXT};
     }}); return api;`)(chromeStub, async () => ({ok: true, json: async () => dictionary}));
+  const api = createApi();
   const table = await api.loadTranslations();
   const glyphFixture = await fetch('fixtures/maxroll_guide_glyph.html').then(r => r.text());
+  const cubeFixture = await fetch('fixtures/maxroll_cube_article.html').then(r => r.text());
   window.testResult = {
+    resources: await runContentResourceTests(createApi, api, chromeStub, cubeFixture),
     guide: await runContentGuideTermTests(api, table, chromeStub, glyphFixture),
     dom: runContentTooltipDomTests(api, table, fixture, sealFixture, skillFixtures.slice(0, 3)),
     planner: await runContentPlannerTooltipDomTests(api, table, skillFixtures.slice(3), sealFixture),

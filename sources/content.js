@@ -53,7 +53,14 @@ const MAXROLL_INTERACTIVE_PARAGON_SELECTOR =
 // 大量のDOM更新が発生するボード描画領域だけをAPI翻訳から除外する。
 const MAXROLL_CHROME_TRANSLATION_EXCLUDED_SELECTOR =
   MAXROLL_INTERACTIVE_PARAGON_SELECTOR;
+const IS_MAXROLL_RESOURCE_PAGE = window.location?.pathname?.startsWith('/d4/resources/');
 const MAXROLL_GUIDE_BLOCK_SELECTOR = [
+  // Resources記事は旧エディターのHTMLで、rich-text-editorを持たない。
+  // 対象パスと記事本文に限定し、ビルドの盤面やナビゲーションへ広げない。
+  ...(IS_MAXROLL_RESOURCE_PAGE ? [
+    '#main-article :is(p, li, blockquote, figcaption, td, th, h1, h2, h3, h4, h5, h6)',
+    '#main-article [class*="_TitleV2__bottomText_"]'
+  ] : []),
   'main article h1',
   '.maxroll-rich-text-editor p',
   '.maxroll-rich-text-editor li',
@@ -613,6 +620,7 @@ chrome.storage.sync.get(
 
     function isAtomicGuideElement(element) {
       return (
+        (IS_MAXROLL_RESOURCE_PAGE && ['UL', 'OL'].includes(element.tagName)) ||
         isD4SemanticElement(element) ||
         ['BR', 'IMG', 'SVG', 'VIDEO', 'AUDIO', 'CANVAS'].includes(
           element.tagName
@@ -770,7 +778,8 @@ chrome.storage.sync.get(
         }
 
         if (isAtomicGuideElement(node)) {
-          const label = node.textContent
+          // Resourcesの入れ子リストは子liの翻訳に任せ、親ではそのまま保持。
+          const label = node.textContent && !['UL', 'OL'].includes(node.tagName)
             ? applyRegexTransformations(node.textContent, regexTable)
             : '';
           source += allocator.allocate({
@@ -976,11 +985,23 @@ chrome.storage.sync.get(
       });
 
       return Array.from(blocks).filter(block =>
-        !block.querySelector(MAXROLL_GUIDE_BLOCK_SELECTOR) &&
+        (!block.querySelector(MAXROLL_GUIDE_BLOCK_SELECTOR) ||
+          (IS_MAXROLL_RESOURCE_PAGE && block.tagName === 'LI')) &&
         !block.closest(MAXROLL_CHROME_TRANSLATION_EXCLUDED_SELECTOR) &&
         (!visibleOnly || isVisibleGuideBlock(block)) &&
         block.textContent.trim()
       );
+    }
+
+    function getGuideBlockText(block) {
+      if (!IS_MAXROLL_RESOURCE_PAGE || block.tagName !== 'LI') return block.textContent;
+      // 子リストの翻訳によって親liを「原文が更新された」と誤認しない。
+      function ownText(node) {
+        if (node.nodeType === 3) return node.nodeValue;
+        if (['UL', 'OL'].includes(node.tagName)) return '';
+        return Array.from(node.childNodes, ownText).join('');
+      }
+      return ownText(block);
     }
 
     async function processMaxrollGuideRoot(root, regexTable) {
@@ -1012,7 +1033,7 @@ chrome.storage.sync.get(
         if (
           record &&
           record.renderedText !== null &&
-          block.textContent !== record.renderedText
+          getGuideBlockText(block) !== record.renderedText
         ) {
           guideBlockRecords.delete(block);
           record = null;
@@ -1080,7 +1101,7 @@ chrome.storage.sync.get(
               await translateGuideTextNodesInPlace(block, regexTable);
             if (translatedInPlace) {
               record.status = 'translated';
-              record.renderedText = block.textContent;
+              record.renderedText = getGuideBlockText(block);
               continue;
             }
           }
@@ -1108,7 +1129,7 @@ chrome.storage.sync.get(
           renderGuideBlock(block, output, record.tokens)
         ) {
           record.status = nextStatus;
-          record.renderedText = block.textContent;
+          record.renderedText = getGuideBlockText(block);
         }
       }
     }
