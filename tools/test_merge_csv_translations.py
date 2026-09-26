@@ -19,6 +19,82 @@ SPEC.loader.exec_module(merge_tool)
 
 
 class MergeCsvTranslationsTests(unittest.TestCase):
+    def test_cube_material_names_are_imported_without_icons(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_cube_material_names_en.csv", fixture / "s15_cube_material_names_ja.csv", {})
+        self.assertEqual(report["selected_by_category"]["items"], 9)
+        for prefix, ja in {"Raw": "未加工の", "Coarse": "荒い", "Refined": "精製された",
+                           "Volatile": "不安定な", "Pure": "純粋な", "Enhanced": "強化された",
+                           "Attuned": "調和の取れた", "Resonant": "共鳴する"}.items():
+            self.assertEqual(merged[prefix + " Primordial Dust"], ja + "原初の塵")
+        self.assertEqual(merged["Infused Horadric Resin"], "浸染したホラドリムの樹脂")
+        self.assertFalse(any("{icon:" in k or "{icon:" in v for k, v in merged.items()))
+
+    def test_all_gem_quality_names_are_imported(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_gem_names_en.csv", fixture / "s15_gem_names_ja.csv", {})
+        self.assertEqual(report["selected_by_category"]["items"], 64)
+        self.assertEqual(len(merged), 57)
+        for gem, ja in {"Amethyst": "アメジスト", "Diamond": "ダイヤモンド",
+                        "Emerald": "エメラルド", "Ruby": "ルビー", "Sapphire": "サファイア",
+                        "Skull": "頭蓋骨", "Topaz": "トパーズ"}.items():
+            for prefix, translated in {"": "", "Crude ": "粗末な", "Chipped ": "欠けた",
+                                       "Flawless ": "傷ひとつない", "Royal ": "王族の", "Grand ": "豪奢な",
+                                       "Horadric ": "ホラドリムの",
+                                       "Flawless Horadric ": "傷ひとつないホラドリムの"}.items():
+                self.assertEqual(merged[prefix + gem], translated + ja)
+        self.assertEqual(merged["The Empyrean Eye"], "最高天の眼")
+
+    def test_prism_tooltip_descriptions_and_flavors(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_prism_tooltips_en.csv", fixture / "s15_prism_tooltips_ja.csv", {})
+        self.assertEqual(report["selected_by_category"]["prism-descriptions"], 8)
+        self.assertEqual(report["selected_by_category"]["flavors"], 8)
+        for raw, expected in [
+            ("Used to target Offensive affixes during Transmutations in the Horadric Cube.",
+             "ホラドリムのキューブで使用することで、攻撃特性の変成が可能になる。"),
+            ("Cube Spoils in War Plans", "作戦計画のキューブの戦利品"),
+            ("Cache Rewards from The Tree of Whispers", "囁きの木の箱の報酬"),
+            ("Collected from:", "入手元:"),
+        ]:
+            self.assertTrue(any(re.fullmatch(k, raw) and v == expected for k, v in merged.items()), raw)
+        self.assertTrue(any("創造の素材" in v for v in merged.values()))
+        self.assertFalse(any("{icon:" in k or "{icon:" in v for k, v in merged.items()))
+
+    def test_prism_names_ignore_icons_and_support_plurals(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, _ = merge_tool.merge_csv_files(
+            fixture / "s15_prism_names_en.csv", fixture / "s15_prism_names_ja.csv", {})
+        names = {"Aggressive": "攻撃的な", "Protector's": "守護者の", "Resourceful": "豊穣な",
+                 "Pragmatic": "実用的な", "Chromatic": "色彩豊かな", "Adept's": "熟達者の",
+                 "Entropic": "無秩序な", "Kullean": "クーレの"}
+        for name, ja in names.items():
+            for ending in (" Tuning Prism", " Tuning Prisms"):
+                self.assertEqual(merged[name + ending], ja + "同調プリズム")
+        self.assertEqual(merged["Tuning Prisms?"], "同調プリズム")
+        self.assertFalse(any("{icon:" in key or "{icon:" in value for key, value in merged.items()))
+
+    def test_season_prefixed_runes_and_common_article_filter(self):
+        fixture = Path(__file__).parent / "fixtures"
+        merged, report = merge_tool.merge_csv_files(
+            fixture / "s15_new_runes_en.csv", fixture / "s15_new_runes_ja.csv", {})
+        for name, expected in {"Tir": "ティア", "Eth": "エス", "Ith": "イス", "Ral": "ラル",
+                               "Amn": "アムン", "Mal": "マル", "Ort": "オルト", "Tal": "タル",
+                               "Ber": "バー", "Ist": "イスト", "Lo": "ロー", "Sol": "ソル"}.items():
+            self.assertEqual(merged[name], expected)
+        self.assertEqual(merged[r"Eth(?=[A-Z])"], "エス")
+        self.assertEqual(merged[r"(?<=[a-z])Tir"], "ティア")
+        self.assertNotIn("The", merged)
+        self.assertEqual(report["counts"]["rejected:common-article"], 1)
+        for raw in ["Gain +2 Primary Resource on Kill for 8 seconds, up to +8.",
+                    "Gain +5 Weapon Damage for 5 seconds, up to +125.",
+                    "Gain 250% Gold Find for 7 seconds.",
+                    "Avoid spending Primary Resource while fighting for 5 seconds."]:
+            self.assertTrue(any(re.fullmatch(pattern, raw) for pattern in merged), raw)
+
     def test_resource_regeneration_expands_csv_resource_names(self):
         fixture = Path(__file__).parent / "fixtures"
         merged, _ = merge_tool.merge_csv_files(

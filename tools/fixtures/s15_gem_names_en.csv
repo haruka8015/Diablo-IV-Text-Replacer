@@ -1,0 +1,65 @@
+SNO,FileName,Index,KeyHash,Key,Translation
+942450,Item_Gem_Amethyst_01,0,4062401,Name,Crude Amethyst
+942451,Item_Gem_Amethyst_02,0,4062401,Name,Crude Amethyst
+942452,Item_Gem_Amethyst_03,0,4062401,Name,Chipped Amethyst
+942453,Item_Gem_Amethyst_04,0,4062401,Name,Amethyst
+942454,Item_Gem_Amethyst_05,0,4062401,Name,Flawless Amethyst
+2057883,Item_Gem_Amethyst_06,0,4062401,Name,Royal Amethyst
+2513266,Item_Gem_Amethyst_07,0,4062401,Name,Grand Amethyst
+2550431,Item_Gem_Amethyst_08,0,4062401,Name,Horadric Amethyst
+2598926,Item_Gem_Amethyst_09,0,4062401,Name,Flawless Horadric Amethyst
+942455,Item_Gem_Diamond_01,0,4062401,Name,Crude Diamond
+942456,Item_Gem_Diamond_02,0,4062401,Name,Crude Diamond
+942457,Item_Gem_Diamond_03,0,4062401,Name,Chipped Diamond
+942458,Item_Gem_Diamond_04,0,4062401,Name,Diamond
+942459,Item_Gem_Diamond_05,0,4062401,Name,Flawless Diamond
+2059547,Item_Gem_Diamond_06,0,4062401,Name,Royal Diamond
+2513267,Item_Gem_Diamond_07,0,4062401,Name,Grand Diamond
+2550445,Item_Gem_Diamond_08,0,4062401,Name,Horadric Diamond
+2598928,Item_Gem_Diamond_09,0,4062401,Name,Flawless Horadric Diamond
+942460,Item_Gem_Emerald_01,0,4062401,Name,Crude Emerald
+942461,Item_Gem_Emerald_02,0,4062401,Name,Crude Emerald
+942462,Item_Gem_Emerald_03,0,4062401,Name,Chipped Emerald
+942463,Item_Gem_Emerald_04,0,4062401,Name,Emerald
+942464,Item_Gem_Emerald_05,0,4062401,Name,Flawless Emerald
+2057797,Item_Gem_Emerald_06,0,4062401,Name,Royal Emerald
+2513269,Item_Gem_Emerald_07,0,4062401,Name,Grand Emerald
+2550447,Item_Gem_Emerald_08,0,4062401,Name,Horadric Emerald
+2598930,Item_Gem_Emerald_09,0,4062401,Name,Flawless Horadric Emerald
+2043192,Item_Gem_Mythic_01,0,4062401,Name,The Empyrean Eye
+942465,Item_Gem_Ruby_01,0,4062401,Name,Crude Ruby
+942466,Item_Gem_Ruby_02,0,4062401,Name,Crude Ruby
+942467,Item_Gem_Ruby_03,0,4062401,Name,Chipped Ruby
+942468,Item_Gem_Ruby_04,0,4062401,Name,Ruby
+942469,Item_Gem_Ruby_05,0,4062401,Name,Flawless Ruby
+2057862,Item_Gem_Ruby_06,0,4062401,Name,Royal Ruby
+2513270,Item_Gem_Ruby_07,0,4062401,Name,Grand Ruby
+2550449,Item_Gem_Ruby_08,0,4062401,Name,Horadric Ruby
+2598932,Item_Gem_Ruby_09,0,4062401,Name,Flawless Horadric Ruby
+942470,Item_Gem_Sapphire_01,0,4062401,Name,Crude Sapphire
+942471,Item_Gem_Sapphire_02,0,4062401,Name,Crude Sapphire
+942472,Item_Gem_Sapphire_03,0,4062401,Name,Chipped Sapphire
+942473,Item_Gem_Sapphire_04,0,4062401,Name,Sapphire
+942474,Item_Gem_Sapphire_05,0,4062401,Name,Flawless Sapphire
+2059532,Item_Gem_Sapphire_06,0,4062401,Name,Royal Sapphire
+2513271,Item_Gem_Sapphire_07,0,4062401,Name,Grand Sapphire
+2550458,Item_Gem_Sapphire_08,0,4062401,Name,Horadric Sapphire
+2598934,Item_Gem_Sapphire_09,0,4062401,Name,Flawless Horadric Sapphire
+942475,Item_Gem_Skull_01,0,4062401,Name,Crude Skull
+942476,Item_Gem_Skull_02,0,4062401,Name,Crude Skull
+942477,Item_Gem_Skull_03,0,4062401,Name,Chipped Skull
+942478,Item_Gem_Skull_04,0,4062401,Name,Skull
+942479,Item_Gem_Skull_05,0,4062401,Name,Flawless Skull
+2059553,Item_Gem_Skull_06,0,4062401,Name,Royal Skull
+2513272,Item_Gem_Skull_07,0,4062401,Name,Grand Skull
+2550459,Item_Gem_Skull_08,0,4062401,Name,Horadric Skull
+2598936,Item_Gem_Skull_09,0,4062401,Name,Flawless Horadric Skull
+942480,Item_Gem_Topaz_01,0,4062401,Name,Crude Topaz
+942481,Item_Gem_Topaz_02,0,4062401,Name,Crude Topaz
+942482,Item_Gem_Topaz_03,0,4062401,Name,Chipped Topaz
+942483,Item_Gem_Topaz_04,0,4062401,Name,Topaz
+942484,Item_Gem_Topaz_05,0,4062401,Name,Flawless Topaz
+2057895,Item_Gem_Topaz_06,0,4062401,Name,Royal Topaz
+2513275,Item_Gem_Topaz_07,0,4062401,Name,Grand Topaz
+2550461,Item_Gem_Topaz_08,0,4062401,Name,Horadric Topaz
+2598938,Item_Gem_Topaz_09,0,4062401,Name,Flawless Horadric Topaz

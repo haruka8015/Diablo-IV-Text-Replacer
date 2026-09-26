@@ -378,10 +378,12 @@ chrome.storage.sync.get(
       const candidates = new Set(patternIndex.unindexed);
       const words = text.match(/[A-Za-z0-9_]+/g) || [];
       words.forEach(word => {
-        const bucket = patternIndex.byFirstWord.get(
-          word.toLocaleLowerCase('en-US')
-        );
-        bucket?.forEach(pattern => candidates.add(pattern));
+        // EthTir等の連結名も索引から候補を引く。照合時の単語境界と
+        // CamelCase専用ルールの大小文字区別は維持する。
+        for (const part of new Set([word, ...word.split(/(?<=[a-z])(?=[A-Z])/)])) {
+          const bucket = patternIndex.byFirstWord.get(part.toLocaleLowerCase('en-US'));
+          bucket?.forEach(pattern => candidates.add(pattern));
+        }
       });
       return Array.from(candidates).sort(
         (left, right) => left.order - right.order

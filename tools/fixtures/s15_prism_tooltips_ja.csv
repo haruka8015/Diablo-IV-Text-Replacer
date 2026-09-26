@@ -1,0 +1,83 @@
+SNO,FileName,Index,KeyHash,Key,Translation
+2533711,Item_X2_HoradricCube_TuningStone_1,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}攻撃的な同調プリズム"
+2533711,Item_X2_HoradricCube_TuningStone_1,1,2789670820,Description,"{c_important}ホラドリムのキューブ{/c}{icon:Cube_TooltipIcon, 1.5}で使用することで、{c_important}攻撃{/c}{icon:TemperAttribute_Offensive, 1.5}特性の変成が可能になる。
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533711,Item_X2_HoradricCube_TuningStone_1,2,4123507722,Flavor,「創造の素材は、この世界のあらゆる粒子の中に豊富に存在している。それをどう形成するかは、意志のみによって決定される。いわば我々の意志と創造の意志とのせめぎ合いなのだ」―ゾルタン・クーレ
+2533714,Item_X2_HoradricCube_TuningStone_2,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}守護者の同調プリズム"
+2533714,Item_X2_HoradricCube_TuningStone_2,1,2789670820,Description,"{c_important}ホラドリムのキューブ{/c}{icon:Cube_TooltipIcon, 1.5}で使用することで、{c_important}防御{/c}{icon:TemperAttribute_Defensive, 1.5}特性の変成が可能になる。
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533714,Item_X2_HoradricCube_TuningStone_2,2,4123507722,Flavor,「創造の素材は、この世界のあらゆる粒子の中に豊富に存在している。それをどう形成するかは、意志のみによって決定される。いわば我々の意志と創造の意志とのせめぎ合いなのだ」―ゾルタン・クーレ
+2533717,Item_X2_HoradricCube_TuningStone_3,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}豊穣な同調プリズム"
+2533717,Item_X2_HoradricCube_TuningStone_3,1,2789670820,Description,"{c_important}ホラドリムのキューブ{/c}{icon:Cube_TooltipIcon, 1.5}で使用することで、{c_important}リソース{/c}{icon:TemperAttribute_Resource, 1.5}特性の変成が可能になる。
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533717,Item_X2_HoradricCube_TuningStone_3,2,4123507722,Flavor,「創造の素材は、この世界のあらゆる粒子の中に豊富に存在している。それをどう形成するかは、意志のみによって決定される。いわば我々の意志と創造の意志とのせめぎ合いなのだ」―ゾルタン・クーレ
+2533719,Item_X2_HoradricCube_TuningStone_4,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}実用的な同調プリズム"
+2533719,Item_X2_HoradricCube_TuningStone_4,1,2789670820,Description,"{c_important}ホラドリムのキューブ{/c}{icon:Cube_TooltipIcon, 1.5}で使用することで、{c_important}機動力{/c}{icon:TemperAttribute_Mobility, 1.5}と{c_important}汎用{/c}{icon:TemperAttribute_Utility, 1.5}特性の変成が可能になる。
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533719,Item_X2_HoradricCube_TuningStone_4,2,4123507722,Flavor,「創造の素材は、この世界のあらゆる粒子の中に豊富に存在している。それをどう形成するかは、意志のみによって決定される。いわば我々の意志と創造の意志とのせめぎ合いなのだ」―ゾルタン・クーレ
+2533722,Item_X2_HoradricCube_TuningStone_5,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}色彩豊かな同調プリズム"
+2533722,Item_X2_HoradricCube_TuningStone_5,1,2789670820,Description,"{c_important}ホラドリムのキューブ{/c}{icon:Cube_TooltipIcon, 1.5}で使用することで、{c_important}耐性{/c}特性の変成が可能になる。
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533722,Item_X2_HoradricCube_TuningStone_5,2,4123507722,Flavor,「創造の素材は、この世界のあらゆる粒子の中に豊富に存在している。それをどう形成するかは、意志のみによって決定される。いわば我々の意志と創造の意志とのせめぎ合いなのだ」―ゾルタン・クーレ
+2533726,Item_X2_HoradricCube_TuningStone_6,0,4062401,Name,"{icon:Cube_TooltipIcon, 2}熟達者の同調プリズム"
+2533726,Item_X2_HoradricCube_TuningStone_6,1,2789670820,Description,"{c_important}ホラドリムのキューブ{/c}{icon:Cube_TooltipIcon, 1.5}で使用することで、{c_important}スキル{/c}および{c_important}基本能力値{/c}特性の変成が可能になる。
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533726,Item_X2_HoradricCube_TuningStone_6,2,4123507722,Flavor,「人類がなぜ制限を受けなければならないのだ？ それは誰の権限だ？」―ゾルタン・クーレ
+2533730,Item_X2_HoradricCube_TuningStone_7,0,4062401,Name,"{icon:Transfiguration, 2}無秩序な同調プリズム"
+2533730,Item_X2_HoradricCube_TuningStone_7,1,2789670820,Description,"{c_important}ホラドリムのキューブ{/c}{icon:Cube_TooltipIcon, 1.5}で使用すると、{c_chaos}変成{/c}{icon:AttributeBullet_AffixTransfigured, 1.5}の結果に影響をおよぼす。
+
+もっともリスクの高い効果ともっとも強力な効果が付与されなくなる。
+
+{c_highlight}{/c}100%{c_highlight}の確率でそのアイテムの{c_red}能力が固定{/c}される。{/c}
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533730,Item_X2_HoradricCube_TuningStone_7,2,4123507722,Flavor,「キューブは強力で優れているが、意図がなければその結果は意味を成さない！ この混沌を制御し… 物質を私の意図に従わせる手段があるはずだ」―ゾルタン・クーレ
+2533732,Item_X2_HoradricCube_TuningStone_8,0,4062401,Name,"{icon:Transfiguration, 2}クーレの同調プリズム"
+2533732,Item_X2_HoradricCube_TuningStone_8,1,2789670820,Description,"{c_highlight}アミュレット{/c}{icon:Item_Amulet, 1.5}{c_highlight}でのみ使用可能{/c}。
+
+{c_important}ホラドリムのキューブ{/c}{icon:APS_Reward_CubeMaterials, 1.5}で使用すると、{c_chaos}変成{/c}{icon:AttributeBullet_AffixTransfigured, 1.5}の結果に影響をおよぼす。
+
+ランダムなボーナス{c_legendary}レジェンダリー化身{/c}{icon:legendarystar, 2}を1つ追加する。
+
+{c_chaos}変成{/c}後も{c_highlight}改造可能{/c}。
+
+入手元:
+{icon:bullet,1.2}{c_highlight}作戦計画{/c}{icon:FontIcon_WarPlans, 1.8}の{c_important}キューブの戦利品{/c}{icon:Cube_TooltipIcon, 1.5}
+{icon:bullet,1.2}{c_highlight}囁きの木{/c}{icon:Icon_Tooltip_Marker_Bounties_TurnIn, 1.5}の{c_important}箱の報酬{/c}
+{icon:bullet,1.2}{c_important}エリート{/c}{icon:Icon_Tooltip_Marker_Hostile_SuperElite, 1.5}モンスター
+{icon:bullet,1.2}{c_highlight}クラスト地下都市{/c}{icon:Icon_Tooltip_Marker_Undercity_Entrance, 1.5}"
+2533732,Item_X2_HoradricCube_TuningStone_8,2,4123507722,Flavor,「鈍く光るいくつもの原石をできる限り磨き上げた。結果は見事なものだが、三大悪たちには遠く及ばない。彼らに対抗するには、別の種の石が必要だ。ティラエルが3つ持ってきてくれた」―ゾルタン・クーレ

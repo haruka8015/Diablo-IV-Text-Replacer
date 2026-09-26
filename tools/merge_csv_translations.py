@@ -46,6 +46,7 @@ PLAYER_SKILL_POWER_PREFIXES = tuple(
     )
 )
 TOOLTIP_TEXT_CATEGORIES = {
+    "prism-descriptions",
     "drop-sources",
     "effects",
     "flavors",
@@ -307,10 +308,12 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                 "runes",
                 "ルーン名、ルーンワード名、条件・効果・オーバーフロー説明",
                 lambda row: (
-                    row.file_name.startswith("Item_Rune_")
+                    bool(re.match(r"^Item_(?:S\d+_)?Rune_", row.file_name))
                     or (
                         row.file_name == "UIToolTips"
-                        and row.key == "RunewordCompleteWithFrequency"
+                        and row.key in {"RunewordCompleteWithFrequency", "RuneUnsocketedCondition",
+                                        "RuneUnsocketedEffect", "SocketableConditionRune",
+                                        "SocketableEffectRune", "RuneInternalCooldown"}
                     )
                 ),
             ),
@@ -319,8 +322,12 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             "items",
             Rule(
                 "items",
-                "アイテム種別、ユニーク、レジェンダリー、ルーンの名前",
+                "アイテム種別、ユニーク、レジェンダリー、宝石、ルーンの名前",
                 lambda row: (_is_legacy_item_file(row.file_name)
+                             or row.file_name.startswith("Item_Gem_")
+                             or row.file_name.startswith(("Item_X2_HoradricCube_CraftingMaterial_",
+                                                          "Item_X2_Talisman_CraftingMaterial_"))
+                             or row.file_name.startswith("Item_X2_HoradricCube_TuningStone_")
                              or row.file_name.startswith("SetItemBonus_Talisman_"))
                 and row.key in NAME_FIELDS,
             ),
@@ -354,6 +361,15 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
             ),
         ),
         (
+            "prism-descriptions",
+            Rule(
+                "prism-descriptions",
+                "同調プリズムの用途・使用条件・入手元",
+                lambda row: row.file_name.startswith("Item_X2_HoradricCube_TuningStone_")
+                and row.key == "Description",
+            ),
+        ),
+        (
             "flavors",
             Rule(
                 "flavors",
@@ -362,6 +378,7 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                 and row.file_name.startswith("Item_")
                 and (
                     _is_legacy_item_file(row.file_name)
+                    or row.file_name.startswith("Item_X2_HoradricCube_TuningStone_")
                     or "_Mythic" in row.file_name
                 ),
             ),
@@ -921,7 +938,7 @@ def create_rune_tooltip_pairs(
         en_row.translation,
         ja_row.translation,
     )
-    if en_row.key == "RuneDescription":
+    if en_row.key in {"RuneDescription", "RuneInternalCooldown"}:
         # ルーン効果の{s1}は影の数などの実数値。数値用の経路で
         # 単複数指定も展開し、内部表記をそのまま照合しない。
         def numeric_rune_values(text: str) -> str:
@@ -953,14 +970,14 @@ def create_rune_tooltip_pairs(
 
     # Maxrollは条件ルーン名と効果ルーン名を空白なしで連結する。
     # 通常の単語境界規則は残しつつ、連結位置だけを追加規則で補う。
-    if en_row.file_name.startswith("Item_Rune_Condition_"):
+    if re.match(r"^Item_(?:S\d+_)?Rune_Condition_", en_row.file_name):
         pairs.append(
             (
                 rf"{_escape_regex_literal(english)}(?=[A-Z])",
                 japanese,
             )
         )
-    elif en_row.file_name.startswith("Item_Rune_Effect_"):
+    elif re.match(r"^Item_(?:S\d+_)?Rune_Effect_", en_row.file_name):
         pairs.append(
             (
                 rf"(?<=[a-z]){_escape_regex_literal(english)}",
@@ -1382,6 +1399,10 @@ def merge_csv_files(
         category = selected_category(en_row, categories)
         if category is None:
             continue
+        # 装備のランダム名断片「The」は冠詞に誤爆するため取り込まない。
+        if category == "rare-names" and clean_color_tags(en_row.translation).casefold() == "the":
+            stats["rejected:common-article"] += 1
+            continue
         stats["selected"] += 1
         category_selected[category] += 1
 
@@ -1439,7 +1460,12 @@ def merge_csv_files(
             )
         ):
             effect_pairs = (
-                create_seal_slot_pairs(en_row, ja_row)
+                create_d4_description_pairs(
+                    ICON_TAG_RE.sub("", en_row.translation),
+                    ICON_TAG_RE.sub("", ja_row.translation),
+                )
+                if category == "prism-descriptions"
+                else create_seal_slot_pairs(en_row, ja_row)
                 if en_row.file_name == "Affix_Talisman_SealAffix_AdditionalCharmSlot"
                 else create_drop_source_pairs(en_row, ja_row)
                 if category == "drop-sources"
@@ -1462,7 +1488,8 @@ def merge_csv_files(
             rejection = None
         else:
             key, value, rejection = make_translation_pair(
-                en_row.translation, ja_row.translation
+                ICON_TAG_RE.sub("", en_row.translation).strip() if category == "items" else en_row.translation,
+                ICON_TAG_RE.sub("", ja_row.translation).strip() if category == "items" else ja_row.translation,
             )
         if rejection:
             stats[f"rejected:{rejection}"] += 1
@@ -1479,6 +1506,11 @@ def merge_csv_files(
             )
         ):
             pairs = [(key, value)]
+            if (category == "items"
+                    and en_row.file_name.startswith("Item_X2_HoradricCube_TuningStone_")
+                    and key.endswith(" Tuning Prism") and value.endswith("同調プリズム")):
+                # 記事の複数形と共通見出し。個別名の長い規則を優先して照合する。
+                pairs.extend([(key + "s", value), ("Tuning Prisms?", "同調プリズム")])
             if category == "attributes":
                 pairs.extend(
                     make_attribute_alias_pairs(

@@ -1,0 +1,47 @@
+SNO,FileName,Index,KeyHash,Key,Translation
+2681155,Item_S15_Rune_Condition_Amn,0,3679068894,RuneDescription,{c_RuneCondition}荊棘の加護ダメージを与える。{/c} 
+2681155,Item_S15_Rune_Condition_Amn,1,3975619591,RunewordPhrasePrefix,刺々しい
+2681155,Item_S15_Rune_Condition_Amn,2,4062401,Name,アムン
+2681153,Item_S15_Rune_Condition_Eth,0,3679068894,RuneDescription,{c_RuneCondition}戦闘中5秒間、プライマリリソースを消費しなくなる。{/c} 
+2681153,Item_S15_Rune_Condition_Eth,1,3975619591,RunewordPhrasePrefix,賢明なる
+2681153,Item_S15_Rune_Condition_Eth,2,4062401,Name,エス
+2681159,Item_S15_Rune_Condition_Mal,0,3679068894,RuneDescription,{c_RuneCondition}自身の三大悪の力を解放する。{/c}
+2681159,Item_S15_Rune_Condition_Mal,1,3975619591,RunewordPhrasePrefix,最上なる
+2681159,Item_S15_Rune_Condition_Mal,2,4062401,Name,マル
+2681128,Item_S15_Rune_Condition_Ort,0,3679068894,RuneDescription,{c_RuneCondition}非物理直接ダメージを与える。{/c}
+2681128,Item_S15_Rune_Condition_Ort,1,3975619591,RunewordPhrasePrefix,元素たる
+2681128,Item_S15_Rune_Condition_Ort,2,4062401,Name,オルト
+2681110,Item_S15_Rune_Condition_Tal,0,3679068894,RuneDescription,{c_RuneCondition}継続ダメージを与える{/c}
+2681110,Item_S15_Rune_Condition_Tal,1,3975619591,RunewordPhrasePrefix,篩い落とし
+2681110,Item_S15_Rune_Condition_Tal,2,4062401,Name,タル
+2681171,Item_S15_Rune_Effect_Ber,0,4096619470,RunewordPhraseSuffix,裁定
+2681171,Item_S15_Rune_Effect_Ber,1,3679068894,RuneDescription,{c_RuneEffect}幸運の一撃: 次に使用する{c_number}5{/c}回のスキルが、最大{c_number}10%{/c}の確率で会心の一撃になる。
+2681171,Item_S15_Rune_Effect_Ber,2,3045201534,RuneOverflowBehavior,複数の蓄積を獲得
+2681171,Item_S15_Rune_Effect_Ber,3,4062401,Name,バー
+2681169,Item_S15_Rune_Effect_Ist,0,3679068894,RuneDescription,{c_RuneEffect}自身の三大悪の力を解放する。{/c}
+2681169,Item_S15_Rune_Effect_Ist,1,4096619470,RunewordPhraseSuffix,邪鬼
+2681169,Item_S15_Rune_Effect_Ist,2,4062401,Name,イスト
+2681157,Item_S15_Rune_Effect_Ith,0,4096619470,RunewordPhraseSuffix,力
+2681157,Item_S15_Rune_Effect_Ith,1,3679068894,RuneDescription,{c_RuneEffect}{c_number}5{/c}秒間、武器ダメージが{c_number}+5{/c}上昇する。最大{c_number}+125{/c}。
+2681157,Item_S15_Rune_Effect_Ith,2,3045201534,RuneOverflowBehavior,複数の蓄積を獲得
+2681157,Item_S15_Rune_Effect_Ith,3,4062401,Name,イス
+2681167,Item_S15_Rune_Effect_Lo,0,4096619470,RunewordPhraseSuffix,致死能
+2681167,Item_S15_Rune_Effect_Lo,1,3679068894,RuneDescription,{c_RuneEffect}{c_number}10{/c}秒間、デッドリー・ストライクの確率が{c_number}25%{/c}上昇する。
+2681167,Item_S15_Rune_Effect_Lo,2,3045201534,RuneOverflowBehavior,持続時間の延長
+2681167,Item_S15_Rune_Effect_Lo,3,4062401,Name,ロー
+2681161,Item_S15_Rune_Effect_Ral,0,4096619470,RunewordPhraseSuffix,強欲
+2681161,Item_S15_Rune_Effect_Ral,1,3679068894,RuneDescription,{c_RuneEffect}{c_number}7{/c}秒間、ゴールド発見量が{c_number}250%{/c}上昇する。
+2681161,Item_S15_Rune_Effect_Ral,2,4062401,Name,ラル
+2681163,Item_S15_Rune_Effect_Sol,0,4096619470,RunewordPhraseSuffix,防塁
+2681163,Item_S15_Rune_Effect_Sol,1,3679068894,RuneDescription,{c_RuneEffect}{c_number}{s1}{/c}秒間、ダメージ減少率が{c_number}15%{/c}上昇する。
+2681163,Item_S15_Rune_Effect_Sol,2,4062401,Name,ソル
+2681165,Item_S15_Rune_Effect_Tir,0,4096619470,RunewordPhraseSuffix,収穫
+2681165,Item_S15_Rune_Effect_Tir,1,3679068894,RuneDescription,{c_RuneEffect}{c_number}8{/c}秒間、キル時のプライマリリソース回復量が{c_number}+2{/c}増加する。最大{c_number}+8{/c}。
+2681165,Item_S15_Rune_Effect_Tir,2,3045201534,RuneOverflowBehavior,複数の蓄積を獲得
+2681165,Item_S15_Rune_Effect_Tir,3,4062401,Name,ティア
+60889,RareNameStrings_Prefix_Armor_Amulet,20,3973936891,Amulet021,唯一無二なる
+4280,UIToolTips,218,1845121654,RuneUnsocketedCondition,{c_label}獲得: {/c}{c_RuneCondition}[RunicPowerDataValue()]{/c}の供物
+4280,UIToolTips,219,116601916,RuneUnsocketedEffect,{c_label}必要: {/c}{c_RuneCondition}[RunicPowerDataValue()]{/c}の供物
+4280,UIToolTips,591,3497265662,SocketableConditionRune,ソケットを2つ持つ装備上で招来のルーンと連携してルーンワードを作成する。ルーンワードは一度に2つしか発動できない。
+4280,UIToolTips,592,827345284,SocketableEffectRune,ソケットを2つ持つ装備上で儀式のルーンと連携してルーンワードを作成する。ルーンワードは一度に2つしか発動できない。
+4280,UIToolTips,608,3729146972,RuneInternalCooldown,{c_label}クールダウン:{/c} {c_RuneCondition}{s1}{/c}秒

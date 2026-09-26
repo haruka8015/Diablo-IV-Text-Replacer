@@ -1,0 +1,10 @@
+SNO,FileName,Index,KeyHash,Key,Translation
+2502410,Item_X2_HoradricCube_CraftingMaterial_A,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Raw Primordial Dust"
+2502431,Item_X2_HoradricCube_CraftingMaterial_B,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Coarse Primordial Dust"
+2502434,Item_X2_HoradricCube_CraftingMaterial_C,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Refined Primordial Dust"
+2502439,Item_X2_HoradricCube_CraftingMaterial_D,0,4062401,Name,"{icon:Transfiguration, 2} Volatile Primordial Dust"
+2502442,Item_X2_HoradricCube_CraftingMaterial_E,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Pure Primordial Dust"
+2530715,Item_X2_HoradricCube_CraftingMaterial_F,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Enhanced Primordial Dust"
+2530718,Item_X2_HoradricCube_CraftingMaterial_G,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Attuned Primordial Dust"
+2530722,Item_X2_HoradricCube_CraftingMaterial_H,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Resonant Primordial Dust"
+2585030,Item_X2_Talisman_CraftingMaterial_HoradricResin,0,4062401,Name,"{icon:Cube_TooltipIcon, 2} Infused Horadric Resin"
