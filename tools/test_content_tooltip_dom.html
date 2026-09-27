@@ -8,24 +8,39 @@
   const source = await fetch('../sources/content.js').then(r => r.text());
   new Function(source);
   const dictionary = {
+    '__D4T_ITEM_PREFIX__:legendary:Sample': '装備の',
+    '__D4T_ITEM_PREFIX__:seal:Sample': '刻印の',
+    '__D4T_ITEM_PREFIX__:rare:Special': '希少の',
+    'Gain (\\d+)% Widgets\\. Widgets store (\\d+)%\\.': '試験部品が$1%増え、試験部品は$2%保持する。',
     'Test Gizmo': '試験装置', 'Sample': '見本', 'Widgets': '試験部品',
     '__D4T_SKILL_TAG__:Sample': '試験分類',
     '(\\d+)\\s+sample\\s+units\\s+in\\s+test\\s+storage:': '試験保管数$1:',
     'Test\\s+Gizmo\\s+stores\\s+\\[NaN - NaN\\]\\s+units\\.': '試験装置の保管数は[NaN - NaN]。',
     'Test\\s+Gizmo\\s+moves\\s+(\\d+)\\s+objects\\s+into\\s+(\\d+)\\s+boxes\\.': '試験装置が$2個の箱に$1個の物体を移す。',
     "Widgets'\\s+test\\s+value\\s+is\\s+(\\d+)\\.": '試験部品の試験値は$1。',
-    '__D4T_STYLED_TERM__:Sample': '試験用',
+    '__D4T_STYLED_TERM__:Sample': '〈試験用〉\n試験用\n験用',
+    '(?<=[a-z])Abc': 'アブ', 'Abc(?=[A-Z])': 'アブ',
+    '(?<=[a-z])Def': 'デフ', 'Def(?=[A-Z])': 'デフ',
+    'Test\\s+Gizmo\\s+increases\\s+the\\s+sample\\s+count\\s+by\\s+(\\d+)%\\.': '試験装置が見本の数を$1%増加させる。',
     'Test Gizmo creates a Sample object for (\\d+) seconds\\.': '試験装置が試験用の物体を$1秒間作る。',
     'Test Gizmo stores (\\d+)% energy \\((\\d+)%\\) in a box\\.': '試験装置が$1%のエネルギー($2%)を箱に保存する。'
   };
+  const valueCapture = source.match(/const GENERATED_TOOLTIP_VALUE_CAPTURE = String.raw`([^`]+)`;/)[1];
+  dictionary['A tested box holds ' + valueCapture + ' values for (\\d+) seconds\\.'] = '試験箱は$2秒間、$1個を保持する。';
   const chrome = {storage: {onChanged: {addListener() {}}, sync: {get(k, cb) {cb({enabled: true});}}}, runtime: {getURL(p) {return p;}}};
   const prefix = source.slice(0, source.indexOf('    let debounceTimer;'));
   const api = new Function('chrome', 'fetch', `let api; ${prefix}
-    api = {loadTranslations, replaceText, observeDOM}; }}); return api;`)(chrome, async () => ({ok: true, json: async () => dictionary}));
+    api = {loadTranslations, replaceText, observeDOM, findStyledTranslationInSentence}; }}); return api;`)(chrome, async () => ({ok: true, json: async () => dictionary}));
   const table = await api.loadTranslations();
   let passed = 0;
   const check = (ok, name) => { if (!ok) throw new Error(name); passed++; };
+  check(api.findStyledTranslationInSentence('Sample','試験用と験用') === null, 'Separate candidate positions remain ambiguous');
   const samples = [
+    ['<span class="d4-color-important">Test Gizmo</span><span class="d4-color-important"> </span>moves <span class="d4-color-number">2</span> objects into <span class="d4-color-number">620</span> boxes.', ' 試験装置が620個の箱に2個の物体を移す。'],
+    ['A tested box holds <span class="d4-color-number">[NaN - NaN]</span> values for <span class="d4-color-number">7</span> seconds.', '試験箱は7秒間、[NaN - NaN]個を保持する。'],
+    ['<span class="d4-color-gold">Test Gizmo</span> moves <span class="d4-color-number">2</span> objects into <span class="d4-color-number">620</span> boxes.', '試験装置が620個の箱に2個の物体を移す。'],
+    ['<span class="d4-color-mythic"><span class="d4-color-important">Test Gizmo</span> moves <span class="d4-color-number">2</span> objects into <span class="d4-color-number">620</span> boxes.</span>', '試験装置が620個の箱に2個の物体を移す。'],
+    ['<span class="d4-color-mythic">Gain <span class="d4-color-number">5%</span><span class="d4-color-mythic"> <span class="d4-color-important">Widgets</span>. <span class="d4-color-important">Widgets</span> store </span></span><span class="d4-color-number">12%</span>.', '試験部品が5%増え、試験部品は12%保持する。'],
     ['Test Gizmo stores <span class="d4-color-inactive">[NaN - NaN]</span> units.', '試験装置の保管数は[NaN - NaN]。'],
     ['<span class="d4-color-important">Test Gizmo</span> moves <span class="d4-color-number">2</span> objects into <span class="d4-color-number">620</span> boxes.', '試験装置が620個の箱に2個の物体を移す。'],
     ['<span class="d4-color-important">Widgets\'</span> test value is <span class="d4-color-number">17</span>.', '試験部品の試験値は17。'],
@@ -52,14 +67,28 @@
     tip.remove();
   }
   const tagHost = document.createElement('div');
-  tagHost.innerHTML = '<div class="d4t-GameTooltip"><div class="d4t-tag">Sample</div></div><p>Sample</p>';
+  tagHost.innerHTML = '<div class="d4t-GameTooltip"><div class="d4t-tag">Sample</div></div><p>Sample</p><div class="sample_PlannerWidget__header__test">Sample</div>';
   const tag = tagHost.querySelector('.d4t-tag');
   api.replaceText(tagHost, table);
   check(tag.textContent === '試験分類', 'Contextual skill tag');
   check(tagHost.querySelector('p').textContent === '見本', 'Ordinary word unchanged');
+  check(tagHost.lastChild.textContent === '試験分類', 'Class mechanic header uses UI translation');
   check(tagHost.querySelector('.d4t-tag') === tag, 'Tag element retained');
   api.replaceText(tagHost, table);
   check(tag.textContent === '試験分類', 'Tag repeated replacement');
+  for (const [subtitle, text, expected] of [
+    ['Legendary Amulet', 'Sample Test Gizmo', '装備の 試験装置'],
+    ['Legendary Horadric Seal', 'Sample Test Gizmo', '刻印の 試験装置'],
+    ['Legendary Horadric Seal', 'Special Test Gizmo', '希少の 試験装置'],
+  ]) {
+    const host = document.createElement('div');
+    host.innerHTML = '<div class="d4t-GameTooltip d4t-tip-legendary"><div class="d4t-tip-header"><div class="d4t-title">'+text+'</div><div class="d4t-sub-title">'+subtitle+'</div><div>900 Item Power</div></div></div><p>Sample</p>';
+    api.replaceText(host, table);
+    check(host.querySelector('.d4t-title').textContent === expected, 'Contextual equipment prefix');
+    check(host.querySelector('p').textContent === '見本', 'Equipment prefix does not replace ordinary word');
+    const once = host.innerHTML; api.replaceText(host, table);
+    check(host.innerHTML === once, 'Equipment prefix repeated replacement');
+  }
   for (const automatic of [false, true]) {
     const tip = document.createElement('div');
     tip.className = 'd4t-GameTooltip';
@@ -74,6 +103,20 @@
     check(effect.lastChild === sibling && sibling.textContent === '3と4', 'Styled sibling retained');
     const translated = tip.innerHTML; api.replaceText(tip, table);
     check(tip.innerHTML === translated, 'Adjacent text repeated replacement');
+    tip.remove();
+  }
+  for (const automatic of [false, true]) {
+    const tip = document.createElement('div');
+    tip.className = 'd4t-GameTooltip';
+    tip.innerHTML = '<div>Test Gizmo increases the sample count by <span class="d4-color-number">50%.</span></div><div>AbcDefAbc</div>';
+    const value = tip.querySelector('span');
+    if (automatic) { document.body.append(tip); await new Promise(r => setTimeout(r, 300)); }
+    else api.replaceText(tip, table);
+    check(tip.firstChild.textContent === '試験装置が見本の数を50%増加させる。', 'Punctuation inside numeric span');
+    check(value.textContent === '50%' && tip.contains(value), 'Numeric style retained');
+    check(tip.lastChild.textContent === 'アブデフアブ', 'Adjacent rune names translated in one pass');
+    const once = tip.innerHTML; api.replaceText(tip, table);
+    check(tip.innerHTML === once, 'Adjacent rune names are stable');
     tip.remove();
   }
   window.testResult = {selfAuthored: {passed}};

@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import itertools
 import os
 import re
 import sys
@@ -35,6 +36,10 @@ PLAYER_SKILL_POWER_PREFIXES = tuple(
         "Barbarian",
         "Druid",
         "Necromancer",
+        "X1_Barbarian",
+        "X1_Druid",
+        "X1_Necromancer",
+        "X1_Rogue",
         "Paladin",
         "Rogue",
         "Sorcerer",
@@ -57,10 +62,12 @@ TOOLTIP_TEXT_CATEGORIES = {
     "minions",
     "class-mechanics",
     "weapon-tooltip",
+    "warplans",
 }
 DROP_SOURCE_KEY_PREFIX = "__D4T_DROP_SOURCE__:"
 STYLED_TERM_KEY_PREFIX = "__D4T_STYLED_TERM__:"
 SKILL_TAG_KEY_PREFIX = "__D4T_SKILL_TAG__:"
+ITEM_PREFIX_KEY_PREFIX = "__D4T_ITEM_PREFIX__:"
 COLOR_TAG_RE = re.compile(
     r"\{/?c(?:_\w+|:[0-9A-Fa-f]{6,8})?\}",
     flags=re.IGNORECASE,
@@ -79,6 +86,8 @@ D4_VALUE_TOKEN_RE = re.compile(
     r"|payload:[^{}\r\n]+"
     r"|dot:[^{}\r\n]+"
     r"|shield:[^{}\r\n]+"
+    r"|pet_health:[^{}\r\n]+"
+    r"|fortified:[^{}\r\n]+"
     r"|buffduration:[^{}\r\n]+"
     r"|Resource\s+Cost"
     r"|Combat\s+Effect\s+Chance"
@@ -165,7 +174,7 @@ def _is_class_mechanic_row(row: CsvRow) -> bool:
             "SpiritBonding", "BondingInfo", "BondingInfo_Short", "BondingInfo_Unlocked",
         },
         "RogueSpecializations": {"SpecializationsHeader"},
-        "General": {"Specialization"},
+        "General": {"Specialization", "PaladinClassMechanic"},
         "SkillsUI": {"EnchantTitle", "EnchantSlotLocked", "EnchantSlotAvailable"},
         "UIToolTips": {"SkillSectionHeader_Enchant"},
         "SpiritbornMechanic": {
@@ -351,6 +360,9 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                         ("SkillRequirements", "Shield"),
                     }
                     or row.file_name == "ItemQuality"
+                    or row.file_name == "SkillRequirements"
+                    or (row.file_name == "UIToolTips" and row.key.startswith("CC_Type_"))
+                    or (row.file_name == "General" and bool(re.fullmatch(r"PlayerClass\w+(?:Male|Female)", row.key)))
                 ),
             ),
         ),
@@ -432,6 +444,7 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                 and (
                     _is_legacy_item_file(row.file_name)
                     or row.file_name.startswith("Item_X2_HoradricCube_TuningStone_")
+                    or row.file_name.startswith("Item_Gem_")
                     or "_Mythic" in row.file_name
                 ),
             ),
@@ -482,7 +495,7 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                     row.file_name.startswith(("Skill_", "SkillTree_"))
                     or row.file_name == "SkillTagNames"
                     or (
-                        ((row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES)
+                        ((row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES + ("Power_NPC_Mercenary_", "Power_Mercenary_"))
                           and row.file_name != "Power_X1_Sorcerer_Familiar_Enchantment")
                          or bool(re.match(r"^Power_S\d+_Triad[A-C]_Player_", row.file_name)))
                         and (
@@ -504,6 +517,15 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                     or row.key in {"ArmyHeader", "Upgrades", "UnitTypeSacrifice"}
                     or row.key.startswith("ActionBarIndicator_Tooltip_")
                 ),
+            ),
+        ),
+        (
+            "warplans",
+            Rule(
+                "warplans",
+                "ウォープランの攻略用効果・シーズン効果説明",
+                lambda row: row.file_name.startswith("Power_Warplans_")
+                and row.key in {"desc", "warplan_seasonal_desc"},
             ),
         ),
         (
@@ -617,6 +639,8 @@ def _escape_regex_text(value: str) -> str:
 
 def _escape_d4_rendered_text(value: str) -> str:
     """ゲームの単複数トークンをMaxrollの描画結果に合う正規表現へ変換する。"""
+    # 傭兵のCSVにはコロン・終端が欠けた秒数指定がある。確認済みの形だけ補う。
+    value = value.replace('|4second;seconds', '|4second:seconds;').replace('|4seconds;second', '|4seconds:second;')
     parts: list[str] = []
     position = 0
     for match in D4_PLURAL_TOKEN_RE.finditer(value):
@@ -659,7 +683,7 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
 
     for match in english_tokens:
         literal_before = english[position : match.start()]
-        literal_pattern = _escape_regex_text(literal_before)
+        literal_pattern = _escape_d4_rendered_text(literal_before)
         # Maxrollはplaceholderをspanにし、直後の空白をDOMから落とすことがある。
         # "Damageif requirements" のような連結表示も同じテンプレートで拾う。
         if pattern_parts and literal_before[:1].isspace():
@@ -685,7 +709,7 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
         position = match.end()
 
     trailing_literal = english[position:]
-    trailing_pattern = _escape_regex_text(trailing_literal)
+    trailing_pattern = _escape_d4_rendered_text(trailing_literal)
     if english_tokens and trailing_literal[:1].isspace():
         trailing_pattern = re.sub(r"^\\s\+", r"\\s*", trailing_pattern)
     pattern_parts.append(trailing_pattern)
@@ -717,6 +741,9 @@ def create_template_pair(english: str, japanese: str) -> tuple[str, str] | None:
 
 def _d4_value_token_id(token: str) -> str:
     normalized = re.sub(r"\s+", "", token.replace('""', '"')).lower()
+    simple_reference = re.fullmatch(r"(?:\{(sf_\w+)\}|\[\{?(sf_\w+)\}?\])", normalized)
+    if simple_reference:
+        return next(group for group in simple_reference.groups() if group)
     # 表示上の加算/乗算マーカーは言語CSV間で省略されることがある。
     # 値の参照元が同じなら、置換位置を対応付けられるよう同一視する。
     return re.sub(r"\|(%)(?:\+|x)?\|", r"|\1|", normalized)
@@ -724,6 +751,8 @@ def _d4_value_token_id(token: str) -> str:
 
 def strip_d4_format_tags_preserving_values(value: str) -> str:
     """色・制御タグだけを除き、Maxrollで実数化されるトークンは残す。"""
+    # 一部のRuneDescriptionにある閉じ色タグの括弧誤記。
+    value = re.sub(r"\{/(c(?:_\w+)?|u|b)\]", r"{/\1}", value)
     return D4_FORMAT_TAG_RE.sub(
         lambda match: (
             match.group(0)
@@ -805,36 +834,57 @@ def create_d4_description_pair(
     return pattern, replacement
 
 
+def paired_conditional_variants(english: str, japanese: str) -> list[tuple[str, str]]:
+    """同じ条件は英日・繰り返し出現箇所で同じ分岐を選ぶ。"""
+    tokens = re.compile(r"\{if:([^{}\r\n]+)\}|\{else\}|\{/if\}", re.IGNORECASE)
+    condition_id = lambda value: re.sub(r"\s+", "", value).casefold()
+    conditions = sorted({condition_id(m[1]) for m in tokens.finditer(english + japanese) if m[1]})
+    # 異常な入力で指数的に展開しない。通常の効果文は数個の条件のみ。
+    if len(conditions) > 10:
+        return []
+
+    def render(value: str, choices: dict[str, bool]) -> str | None:
+        match = tokens.search(value)
+        if match is None:
+            return value
+        if match[1] is None:
+            return None
+        depth, alternative, closing = 1, None, None
+        for token in tokens.finditer(value, match.end()):
+            if token[1] is not None:
+                depth += 1
+            elif token[0].lower() == '{/if}':
+                depth -= 1
+                if depth == 0:
+                    closing = token
+                    break
+            elif depth == 1:
+                if alternative is not None:
+                    return None
+                alternative = token
+        if closing is None:
+            return None
+        branch = (value[match.end():alternative.start() if alternative else closing.start()]
+                  if choices[condition_id(match[1])]
+                  else value[alternative.end():closing.start()] if alternative else '')
+        selected = render(branch, choices)
+        remainder = render(value[closing.end():], choices)
+        return None if selected is None or remainder is None else value[:match.start()] + selected + remainder
+
+    result = []
+    for values in itertools.product((True, False), repeat=len(conditions)):
+        choices = dict(zip(conditions, values))
+        en, ja = render(english, choices), render(japanese, choices)
+        if en is not None and ja is not None and (en, ja) not in result:
+            result.append((en, ja))
+    return result
+
+
 def create_d4_description_pairs(
     english: str, japanese: str
 ) -> list[tuple[str, str]]:
     """全文に加え、Maxrollが別ブロックへ描画する改行単位の規則も作る。"""
     pairs: list[tuple[str, str]] = []
-
-    def expand_conditionals(value: str) -> list[str]:
-        match = re.search(r"\{if:[^{}\r\n]+\}", value, re.IGNORECASE)
-        if not match:
-            return [value]
-        # 別のifブロックのelseまで跨がず、入れ子の深さで対応を取る。
-        depth, alternative, closing = 1, None, None
-        for token in re.finditer(r"\{if:[^{}\r\n]+\}|\{else\}|\{/if\}", value[match.end():], re.IGNORECASE):
-            start, end = match.end() + token.start(), match.end() + token.end()
-            if token[0].lower().startswith('{if:'):
-                depth += 1
-            elif token[0].lower() == '{/if}':
-                depth -= 1
-                if depth == 0:
-                    closing = (start, end)
-                    break
-            elif depth == 1:
-                alternative = (start, end)
-        if closing is None:
-            return [value]
-        branches = [value[match.end():alternative[0] if alternative else closing[0]],
-                    value[alternative[1]:closing[0]] if alternative else '']
-        return [value[:match.start()] + branch_value + remainder
-                for branch in branches for branch_value in expand_conditionals(branch)
-                for remainder in expand_conditionals(value[closing[1]:])]
 
     # RuneDescriptionの{s1}などは実際の数値に置き換わるため、
     # 色タグだけを除去したテンプレート規則を通常の説明文規則より先に作る。
@@ -880,6 +930,18 @@ def create_d4_description_pairs(
                 )
                 if line_pair and line_pair not in pairs:
                     pairs.append(line_pair)
+        elif len(english_lines) != len(japanese_lines):
+            # サイトの段落境界と日本語CSVの改行数が異なる場合は、
+            # 文の数と各文の数値参照が一致する組だけを分割して扱う。
+            en_sentences = re.split(r"(?<=[.!?])\s+", strip_d4_format_tags_preserving_values(english_value))
+            ja_sentences = [s.strip() for s in re.split(r"(?<=。)", strip_d4_format_tags_preserving_values(japanese_value)) if s.strip()]
+            token_ids = lambda text: sorted(_d4_value_token_id(m[0]) for m in D4_VALUE_TOKEN_RE.finditer(text))
+            if len(en_sentences) == len(ja_sentences) and len(en_sentences) > 1:
+                if all(token_ids(en) == token_ids(ja) for en, ja in zip(en_sentences, ja_sentences)):
+                    for en, ja in zip(en_sentences, ja_sentences):
+                        sentence_pair = create_d4_description_pair(en, ja)
+                        if sentence_pair and sentence_pair not in pairs:
+                            pairs.append(sentence_pair)
 
     template_pair = create_template_pair(
         strip_format_tags_preserving_placeholders(english),
@@ -892,16 +954,8 @@ def create_d4_description_pairs(
     if not has_conditionals:
         append_description_and_line_pairs(english, japanese)
 
-    english_variants = expand_conditionals(english)
-    japanese_variants = expand_conditionals(japanese)
-    if (
-        len(english_variants) > 1
-        and len(english_variants) == len(japanese_variants)
-    ):
-        for english_variant, japanese_variant in zip(
-            english_variants,
-            japanese_variants,
-        ):
+    if has_conditionals:
+        for english_variant, japanese_variant in paired_conditional_variants(english, japanese):
             append_description_and_line_pairs(
                 english_variant,
                 japanese_variant,
@@ -909,8 +963,130 @@ def create_d4_description_pairs(
     return pairs
 
 
-def create_styled_term_pairs(english: str, japanese: str) -> list[tuple[str, str]]:
+def unbracket_styled_name(value: str) -> str:
+    """名称全体を囲む括弧だけを外し、名称の一部にある括弧は保持する。"""
+    return value[1:-1] if value.startswith('〈') and value.endswith('〉') else value
+
+
+def create_styled_term_pairs(english: str, japanese: str, known_terms: dict[str, set[str]] | None = None, *, single_only: bool = False) -> list[tuple[str, str]]:
     """対応する効果文から装飾語の訳を得る。数値参照で対応が確定する区間だけ使う。"""
+    english = re.sub(r"\{/(c(?:_\w+)?|u|b)\]", r"{/\1}", english)
+    japanese = re.sub(r"\{/(c(?:_\w+)?|u|b)\]", r"{/\1}", japanese)
+    english = english.replace('{c_gold}', '{c_important}')
+    japanese = japanese.replace('{c_gold}', '{c_important}')
+    if re.search(r"\{if:", english + japanese, re.I):
+        return sorted({pair for en, ja in paired_conditional_variants(english, japanese)
+                       for pair in create_styled_term_pairs(en, ja, known_terms, single_only=single_only)})
+    # 「2体の影」の「体の」は数量表現であり、Shadesという用語の別訳ではない。
+    # 数値タグへ直接続く助数詞だけを候補抽出時に除く。全文の訳は変更しない。
+    japanese = re.sub(
+        r"(\{c_number\}(?:\[[^\]\n]+\]|\{[^}\n]+\}|\d+)\{/c\}\s*\{c_important\})(?:体|個|本|枚|匹|つ)の",
+        r"\1", japanese,
+    )
+    pairs = _create_plain_styled_term_pairs(english, japanese, single_only=single_only)
+    # 下線が色タグの内側にある場合も、装飾語そのものを取り出す。
+    english = re.sub(r"\{/?(?:u|b)\}", "", english)
+    japanese = re.sub(r"\{/?(?:u|b)\}", "", japanese)
+    pairs += _create_plain_styled_term_pairs(english, japanese, single_only=single_only)
+    if known_terms:
+        # 複数の装飾語は並び順で対応させない。既知の一対一対応を除き、
+        # 双方に一語だけ残る場合に限って、文中の別訳を候補にできる。
+        tag = re.compile(r"\{c_important\}([^{}]+)\{/c(?:_important)?\}")
+        en_lines = [x for x in english.splitlines() if x.strip()]
+        ja_lines = [x for x in japanese.splitlines() if x.strip()]
+        # 数値の前後は翻訳で入れ替わる。別の装飾語の確認済み訳へ
+        # 対応させてしまう区間候補は採用しない。
+        all_english = {term.casefold() for term in tag.findall(english)}
+        plain_english = strip_d4_format_tags_preserving_values(english)
+        pairs = [(key, value) for key, value in pairs if not any(
+            other.casefold() != key.removeprefix(STYLED_TERM_KEY_PREFIX).casefold()
+            and unbracket_styled_name(value) in known_terms.get(other.casefold(), set())
+            and (other in all_english or re.search(r'(?<![A-Za-z])' + re.escape(other) + r'(?![A-Za-z])', plain_english, re.I))
+            for other in known_terms
+        )]
+        # 同じ説明の数値区間で確定できた別訳も、残る語の判定に使う。
+        # 区間候補への上記の交差検査を通す前には、既知語へ加えない。
+        local_terms = {key: set(values) for key, values in known_terms.items()}
+        for key, value in pairs:
+            name = key.removeprefix(STYLED_TERM_KEY_PREFIX).casefold()
+            local_terms.setdefault(name, set()).add(unbracket_styled_name(value))
+        if len(en_lines) == len(ja_lines) and not single_only:
+            for en, ja in zip(en_lines, ja_lines):
+                left = set(tag.findall(en))
+                right = {unbracket_styled_name(x) for x in tag.findall(ja)}
+                # 訳語はあるが日本語側では無装飾になっている既知語を除く。
+                plain_ja = strip_d4_format_tags_preserving_values(ja)
+                left = {x for x in left if not any(
+                    y in plain_ja and not any(y in candidate for candidate in right)
+                    for y in local_terms.get(x.casefold(), set()))}
+                if len(left) != len(right) or not left:
+                    continue
+                for allow_inflection in (False, True):
+                    options = {}
+                    for x in left:
+                        forms = styled_reference_forms(x) if allow_inflection else {x.casefold()}
+                        labels = set().union(*(local_terms.get(form, set()) for form in forms))
+                        choices = labels & right
+                        if allow_inflection and not choices:
+                            choices = {candidate for candidate in right if any(len(label) > 1 and label in candidate for label in labels)}
+                        options[x] = choices
+                    for x, values in options.items():
+                        if len(values) == 1:
+                            y = next(iter(values))
+                            if sum(y in choices for choices in options.values()) == 1:
+                                left.discard(x)
+                                right.discard(y)
+                                pairs.append((STYLED_TERM_KEY_PREFIX + x, y))
+                if len(left) == len(right) == 1:
+                    x, y = next(iter(left)), next(iter(right))
+                    if re.fullmatch(r"[A-Za-z][A-Za-z '’-]*", x) and re.search(r"[\u3040-\u30ff\u3400-\u9fff]", y):
+                        pairs.append((STYLED_TERM_KEY_PREFIX + x, y))
+                        local_terms.setdefault(x.casefold(), set()).add(y)
+    if known_terms:
+        # 同じ行に複数文がある場合も、文ごとの数値参照が一致する範囲で
+        # 確定済みの用語対応を使う。単なる装飾語の出現順では対応させない。
+        en_sentences = re.split(r"(?<=[.!?])\s+", english)
+        ja_sentences = [x for x in re.split(r"(?<=。)", japanese) if x.strip()]
+        ids = lambda text: sorted(_d4_value_token_id(m[0]) for m in D4_VALUE_TOKEN_RE.finditer(text))
+        if len(en_sentences) == len(ja_sentences) > 1 and all(ids(en) == ids(ja) for en, ja in zip(en_sentences, ja_sentences)):
+            sentence_terms = {key: set(values) for key, values in known_terms.items()}
+            for en, ja in zip(en_sentences, ja_sentences):
+                confirmed = create_styled_term_pairs(en, ja, sentence_terms, single_only=single_only)
+                pairs.extend(confirmed)
+                for key, value in confirmed:
+                    sentence_terms.setdefault(key.removeprefix(STYLED_TERM_KEY_PREFIX).casefold(), set()).add(
+                        unbracket_styled_name(value))
+    return sorted(set(pairs))
+
+
+def create_attribute_styled_term_pairs(en_row: CsvRow, ja_row: CsvRow) -> list[tuple[str, str]]:
+    """単純な属性ラベルの「X Damage / Xダメージ」から装飾語の別訳を得る。"""
+    if en_row.file_name != 'AttributeDescriptions':
+        return []
+    en, ja = clean_color_tags(en_row.translation), clean_color_tags(ja_row.translation)
+    en_tokens, ja_tokens = TEMPLATE_TOKEN_RE.findall(en), TEMPLATE_TOKEN_RE.findall(ja)
+    if len(en_tokens) != 1 or en_tokens != ja_tokens:
+        return []
+    en_label = TEMPLATE_TOKEN_RE.sub('', en).strip(' +')
+    ja_label = TEMPLATE_TOKEN_RE.sub('', ja).strip(' +')
+    left = re.fullmatch(r"([A-Za-z][A-Za-z '-]*) Damage", en_label)
+    right = re.fullmatch(r"([\u3040-\u30ff\u3400-\u9fff]+)ダメージ", ja_label)
+    return [(STYLED_TERM_KEY_PREFIX + left[1], right[1])] if left and right else []
+
+
+def styled_reference_forms(name: str) -> set[str]:
+    """所有格と、複合名の中の単複数だけを正式名の参照候補にする。"""
+    name = name.casefold().replace('’', "'")
+    forms = {name, re.sub(r"(?:'s|')$", '', name)}
+    for match in re.finditer(r'\b([a-z]+)\b', name):
+        word = match[1]
+        singular = word[:-3] + 'y' if word.endswith('ies') else word[:-1] if word.endswith('s') and not word.endswith('ss') else word
+        if singular != word:
+            forms.add(name[:match.start()] + singular + name[match.end():])
+    return forms
+
+
+def _create_plain_styled_term_pairs(english: str, japanese: str, *, single_only: bool = False) -> list[tuple[str, str]]:
     plain_term = re.compile(r"\{c_important\}([^{}]+)\{/c\}")
     en_lines = [line for line in english.splitlines() if line.strip()]
     ja_lines = [line for line in japanese.splitlines() if line.strip()]
@@ -940,6 +1116,8 @@ def create_styled_term_pairs(english: str, japanese: str) -> list[tuple[str, str
 
     for en, ja in zip(en_lines, ja_lines):
         add_single(en, ja)
+        if single_only:
+            continue
         left, right = intervals(en), intervals(ja)
         for key in left.keys() & right.keys():
             add_single(left[key], right[key])
@@ -952,7 +1130,7 @@ def create_class_mechanic_pairs(en_row: CsvRow, ja_row: CsvRow) -> list[tuple[st
     def numeric_tokens(text: str) -> str:
         return re.sub(r"\{s(\d+)\}", r"{SF_CLASS_VALUE_\1}", text)
     return create_d4_description_pairs(
-        numeric_tokens(en_row.translation), numeric_tokens(ja_row.translation)
+        numeric_tokens(en_row.translation), numeric_tokens(corrected_skill_japanese(en_row, ja_row))
     )
 
 
@@ -966,7 +1144,15 @@ def create_paragon_tooltip_ui_pairs(
 
     # Maxrollはこの見出しと注記を別DOMへ分ける。全文規則にすると、同じ
     # コンテナ内の要件値spanまで長文再配置の対象になるため、行単位だけにする。
-    if en_row.key == "ThresholdRequirementsInRangeHeader":
+    if en_row.key == "GlyphRadiusUpgrade":
+        # {s1}は色などの表示用接頭辞で、サイトでは省略される。
+        pair = create_d4_description_pair(
+            english.replace("{s1}", "").replace("{s2}", "{SF_GLYPH_LEVEL}"),
+            japanese.replace("{s1}", "").replace("{s2}", "{SF_GLYPH_LEVEL}"),
+        )
+        if pair:
+            pairs.append(pair)
+    elif en_row.key == "ThresholdRequirementsInRangeHeader":
         english_lines = [
             line.strip() for line in english.splitlines() if line.strip()
         ]
@@ -1116,15 +1302,55 @@ def create_rune_tooltip_pairs(
     return pairs
 
 
-def create_skill_description_pairs(en_row: CsvRow, ja_row: CsvRow) -> list[tuple[str, str]]:
-    """確認済みのスキル原文の参照番号違いだけを補正する。"""
+def corrected_skill_japanese(en_row: CsvRow, ja_row: CsvRow) -> str:
+    """確認済みの行・原文に限定して参照値、条件、制御タグを補正する。"""
     japanese = ja_row.translation
     if (en_row.file_name, en_row.key) == ("Power_Paladin_Fortress", "desc"):
         english_duration = "around you for {c_number}[SF_14|1|]{/c} seconds."
         japanese_duration = "自身の周辺に{c_number}[SF_1|1|]{/c}秒間、防御エリアを生成する。"
         if english_duration in en_row.translation and japanese_duration in japanese:
             japanese = japanese.replace(japanese_duration, japanese_duration.replace("[SF_1|1|]", "[SF_14|1|]"))
-    return create_d4_description_pairs(en_row.translation, japanese)
+    corrections = {
+        ("Power_Barbarian_Frenzy", "desc"): (
+            "its Cast Speed is increased by {c_number}[{SF_1}*100|%+|]{/c} for {c_number}{buffduration:ATTACK_SPEED_INCREASE}{/c} seconds",
+            "発動速度が{c_number}{/c}秒間、{c_number}{buffduration:ATTACK_SPEED_INCREASE}{/c}[{SF_1}*100|%+|]上昇する。",
+            "発動速度が{c_number}{buffduration:ATTACK_SPEED_INCREASE}{/c}秒間、{c_number}[{SF_1}*100|%+|]{/c}上昇する。",
+        ),
+        ("Power_Druid_Shred_NEW", "Mod9_Description"): (
+            "Healing is increased to {c_number}[{SF_8}*2*100|%|]{/c}",
+            "毒状態の敵に命中した場合、自身のライフが最大値の{c_number}[{SF_8}*100|%|]{/c}",
+            "毒状態の敵に命中した場合、自身のライフが最大値の{c_number}[{SF_8}*2*100|%|]{/c}",
+        ),
+        ("Power_Warlock_DemonDefender", "Mod5_Description"): (
+            "It can absorb up to {c_number}[{SF_12}*100|%|]{/c}",
+            "最大でプレイヤーのライフ最大値の{c_number}[{SF_12}|%|]{/c}",
+            "最大でプレイヤーのライフ最大値の{c_number}[{SF_12}*100|%|]{/c}",
+        ),
+    }
+    correction = corrections.get((en_row.file_name, en_row.key))
+    if correction and correction[0] in en_row.translation and correction[1] in japanese:
+        japanese = japanese.replace(correction[1], correction[2])
+    if (en_row.file_name, en_row.key) == ('Power_Barbarian_WarCry', 'Mod5_Description'):
+        stray = 'が{/if}{/c}{c_important}{if:SF_33}'
+        broken_count = 'を{c_number}{if:SF_33}{SF_32}体召喚する。'
+        if ('{c_number}{if:SF_33}{SF_32} {/if}{/c}' in en_row.translation
+                and stray in japanese and broken_count in japanese):
+            japanese = japanese.replace(stray, 'が{c_important}{if:SF_33}').replace(
+                broken_count, 'を{if:SF_33}{c_number}{SF_32}{/c}体{else}1体{/if}召喚する。')
+    if (en_row.file_name, en_row.key) == ('Power_Warlock_Fissure', 'Mod3_Description'):
+        condition = 'Pulling {c_important}{u}Hexed{/u}{/c} enemies inwards.'
+        missing = 'ダメージを与えると同時に敵を引き寄せるようになる。'
+        if condition in en_row.translation and missing in japanese:
+            japanese = japanese.replace(missing, 'ダメージを与えると同時に{c_important}{u}呪力を受けた{/u}{/c}敵を引き寄せるようになる。')
+            japanese = japanese.replace('が深淵に達し、', 'が{c_important}深淵{/c}に達し、')
+    if (en_row.file_name, en_row.key) == ('Power_Warlock_ClassMechanic_Vanguard_C', 'desc'):
+        if '{c_important}Hellfire{/c} Skill damage causes you to emanate fire' in en_row.translation:
+            japanese = japanese.replace('業火スキルダメージを受けると、', '業火スキルでダメージを与えると、')
+    return japanese
+
+
+def create_skill_description_pairs(en_row: CsvRow, ja_row: CsvRow) -> list[tuple[str, str]]:
+    return create_d4_description_pairs(en_row.translation, corrected_skill_japanese(en_row, ja_row))
 
 
 def create_drop_source_pairs(
@@ -1416,6 +1642,10 @@ def make_attribute_alias_pairs(
                     )
                 )
 
+    # 個別アイテムTooltipは固定値ではなく [最小 - 最大] を表示する。
+    # 数値として生成した捕捉だけを拡張し、名前用の汎用捕捉は変えない。
+    if NUMBER_CAPTURE in key:
+        pairs.append((key.replace(NUMBER_CAPTURE, D4_VALUE_CAPTURE), value))
     return pairs
 
 
@@ -1454,7 +1684,8 @@ def make_translation_pair(english: str, japanese: str) -> tuple[str, str, str | 
 def make_affix_alias_pairs(key: str, value: str) -> list[tuple[str, str]]:
     """`of X` 形式からMaxroll向け短縮名と `Aspect of X` を生成する。"""
     if not key.startswith("of ") or len(key) <= 3:
-        return []
+        # 単語だけでは通常接辞と衝突する名前でも、化身の正式なUI名は区別できる。
+        return [(f"{key} Aspect", f"{value}化身")] if key else []
 
     short_value = value[:-1] if value.endswith("の") else value
     return [
@@ -1516,6 +1747,62 @@ def merge_csv_files(
     ja_rows, ja_duplicates = load_csv(ja_path)
     ja_fallback_rows = unique_fallback_rows(ja_rows.values())
     en_fallback_rows = unique_fallback_rows(en_rows.values())
+    known_styled_terms: dict[str, set[str]] = {}
+    reference_names = {}
+    for row in en_rows.values():
+        if selected_category(row, categories) is not None:
+            cleaned = re.sub(r'\{/?(?:u|b)\}', '', row.translation)
+            for name in re.findall(r'\{c_(?:important|gold)\}([^{}]+)\{/c\}', cleaned):
+                if re.fullmatch(r"[A-Za-z][A-Za-z '’-]*", name):
+                    reference_names[name] = styled_reference_forms(name)
+    reference_forms = set().union(*reference_names.values()) if reference_names else set()
+    canonical_labels: dict[str, set[str]] = {}
+    for row in en_rows.values():
+        # 本文・会話は使わず、選択された効果文が参照する正式名称だけを読む。
+        if not row.file_name.startswith(('Actor_', 'Item_', 'Power_', 'ParagonNode_')):
+            continue
+        if row.key not in NAME_FIELDS and not POWER_NAME_RE.fullmatch(row.key):
+            continue
+        name = clean_color_tags(row.translation).casefold().replace('’', "'")
+        if name not in reference_forms:
+            continue
+        counterpart = ja_rows.get(row.identity)
+        if counterpart is None and en_fallback_rows.get(fallback_identity(row)) is not None:
+            counterpart = ja_fallback_rows.get(fallback_identity(row))
+        if counterpart:
+            label = unbracket_styled_name(clean_color_tags(counterpart.translation))
+            if re.fullmatch(r'[\u3040-\u30ff\u3400-\u9fffA-Za-z ・ー]+', label) and re.search(r'[\u3040-\u30ff\u3400-\u9fff]', label):
+                canonical_labels.setdefault(name, set()).add(label)
+    reference_pairs = {}
+    for name, forms in reference_names.items():
+        labels = set().union(*(canonical_labels.get(form, set()) for form in forms))
+        if labels:
+            known_styled_terms.setdefault(name.casefold(), set()).update(labels)
+            reference_pairs[STYLED_TERM_KEY_PREFIX + name] = '\n'.join(sorted(labels))
+    styled_seed_rows = []
+    for row in en_rows.values():
+        if selected_category(row, categories) is None:
+            continue
+        counterpart = ja_rows.get(row.identity)
+        if counterpart is None and en_fallback_rows.get(fallback_identity(row)) is not None:
+            counterpart = ja_fallback_rows.get(fallback_identity(row))
+        if counterpart is None:
+            continue
+        styled_seed_rows.append((row, counterpart))
+        if ((row.file_name == 'SkillTags' and row.key.endswith('_TagName'))
+                or (row.file_name == 'SkillTagNames' and row.key.startswith('SKILL_TAG_'))
+                or (row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES) and row.key in NAME_FIELDS)
+                or (selected_category(row, categories) == 'class-mechanics' and row.key in NAME_FIELDS)):
+            name, label = clean_color_tags(row.translation), clean_color_tags(counterpart.translation)
+            if re.fullmatch(r"[A-Za-z][A-Za-z '’-]*", name) and re.search(r"[\u3040-\u30ff\u3400-\u9fff]", label) and not re.search(r"[{}\n]", label):
+                known_styled_terms.setdefault(name.casefold(), set()).add(unbracket_styled_name(label))
+        for key, value in create_attribute_styled_term_pairs(row, counterpart):
+            name = key.removeprefix(STYLED_TERM_KEY_PREFIX).casefold()
+            known_styled_terms.setdefault(name, set()).add(unbracket_styled_name(value))
+    for row, counterpart in styled_seed_rows:
+        for key, value in create_styled_term_pairs(row.translation, corrected_skill_japanese(row, counterpart), known_styled_terms, single_only=True):
+            name = key.removeprefix(STYLED_TERM_KEY_PREFIX).casefold()
+            known_styled_terms.setdefault(name, set()).add(unbracket_styled_name(value))
     player_skill_names = {
         make_translation_pair(row.translation, "スキル名")[0]
         for row in en_rows.values()
@@ -1539,7 +1826,7 @@ def merge_csv_files(
     category_selected: Counter[str] = Counter()
     category_added: Counter[str] = Counter()
     category_overwritten: Counter[str] = Counter()
-    candidates: dict[str, tuple[str, str]] = {}
+    candidates: dict[str, tuple[str, str]] = {key: (value, 'styled-references') for key, value in reference_pairs.items()}
     conflicts: set[str] = set()
 
     for identity, en_row in en_rows.items():
@@ -1681,19 +1968,28 @@ def merge_csv_files(
                     else:
                         pairs.append((alias_key, alias_value))
 
-        if en_row.file_name.startswith("Power_Warlock_ClassMechanic_") and en_row.key == "desc":
-            pairs.extend(create_styled_term_pairs(en_row.translation, ja_row.translation))
-        if (en_row.file_name, en_row.key) in {
-            ("Power_Rogue_PenetratingShot", "Mod0_Description"),
-            ("Power_Rogue_PoisonImbue", "Mod12_Description"),
-        }:
-            # 個数の助数詞を含む装飾語や、状態名とスキル名の訳の差を
-            # 対応する数値区間から取り込む。通常の単語訳は変更しない。
-            pairs.extend(create_styled_term_pairs(en_row.translation, ja_row.translation))
-        if en_row.file_name == "SkillTags" and en_row.key in {"Skill_Shade_TagName", "Skill_Primary_Defensive_TagName"}:
+        if category in TOOLTIP_TEXT_CATEGORIES or _is_paragon_description_row(en_row):
+            # 特定スキル名の例外ではなく、同じ数値参照区間で一対一に
+            # 対応する装飾語だけを候補として取り込む。
+            pairs.extend(create_styled_term_pairs(en_row.translation, corrected_skill_japanese(en_row, ja_row), known_styled_terms))
+        if category == 'attributes':
+            pairs.extend(create_attribute_styled_term_pairs(en_row, ja_row))
+        if category == 'affixes' and en_row.key == 'Name' and _is_legendary_affix_file(en_row.file_name):
+            name, label = clean_color_tags(en_row.translation), clean_color_tags(ja_row.translation)
+            if re.fullmatch(r"[A-Za-z][A-Za-z '’-]*", name) and not name.startswith('of '):
+                pairs.append((ITEM_PREFIX_KEY_PREFIX + 'legendary:' + name, label))
+        if category == 'rare-names' and en_row.file_name.startswith('RareNameStrings_Prefix'):
+            name, label = clean_color_tags(en_row.translation), clean_color_tags(ja_row.translation)
+            if re.fullmatch(r"[A-Za-z][A-Za-z '’-]*", name):
+                kind = 'seal' if en_row.file_name == 'RareNameStrings_Prefix_Seals' else 'rare'
+                pairs.append((ITEM_PREFIX_KEY_PREFIX + kind + ':' + name, label))
+        if ((en_row.file_name == "SkillTags" and en_row.key.endswith("_TagName"))
+                or (en_row.file_name == "SkillTagNames" and en_row.key.startswith("SKILL_TAG_"))
+                or (en_row.file_name == "General" and en_row.key in {"Specialization", "PaladinClassMechanic"})):
             tag_key, tag_value, tag_rejection = make_translation_pair(en_row.translation, ja_row.translation)
             if not tag_rejection:
                 pairs.append((SKILL_TAG_KEY_PREFIX + tag_key, tag_value))
+                pairs.append((STYLED_TERM_KEY_PREFIX + tag_key, tag_value))
         if en_row.file_name == "SkillTagNames" and en_row.key == "SKILL_TAG_COLD":
             # 装備接辞などの同名単語の既存訳を保持し、Tooltip全文の装飾には
             # スキル分類としての公式訳も使えるようにする。
@@ -1721,7 +2017,7 @@ def merge_csv_files(
                     continue
                 # 同じ英語効果に通常版・旧シーズン版・チャーム版で訳語差が
                 # ある場合、先に現れる現行の基本版を採用する。
-                if category in TOOLTIP_TEXT_CATEGORIES:
+                if category in TOOLTIP_TEXT_CATEGORIES or (category == "paragon" and _is_paragon_description_row(en_row)):
                     stats["effect-conflict-kept-first"] += 1
                     continue
                 del candidates[candidate_key]

@@ -344,7 +344,7 @@ class ExtensionStateTests(unittest.TestCase):
     def test_straight_and_curly_apostrophes_both_match(self):
         content = self.source("content.js")
         self.assertIn(
-            "pattern.replace(/['’]/g, \"['’]\")",
+            ".replace(/['’]/g, \"['’]\")",
             content,
         )
 

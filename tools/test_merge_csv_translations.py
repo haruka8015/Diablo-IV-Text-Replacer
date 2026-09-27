@@ -20,6 +20,246 @@ SPEC.loader.exec_module(merge_tool)
 
 
 class MergeCsvTranslationsTests(unittest.TestCase):
+    def test_styled_name_brackets_are_removed_only_as_a_pair(self):
+        self.assertEqual(merge_tool.unbracket_styled_name('〈試験〉'), '試験')
+        self.assertEqual(merge_tool.unbracket_styled_name('冷気の〈試験〉'), '冷気の〈試験〉')
+        self.assertEqual(merge_tool.unbracket_styled_name('〈試験〉の光'), '〈試験〉の光')
+
+    def test_styled_references_import_only_referenced_names(self):
+        rows = [
+            ('Power_Druid_Test', 'desc', 'Use {c_important}Test Key{/c}.', '{c_important}試験の鍵{/c}を使う。'),
+            ('Item_TestKey', 'Name', 'Test Key', '試験の鍵'),
+            ('Item_Unrelated', 'Name', 'Unrelated Key', '無関係の鍵'),
+            ('Conversation_Test', 'Name', 'Test Key', '会話由来の別訳'),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for language, column in [('en', 2), ('ja', 3)]:
+                with (root / (language + '.csv')).open('w', encoding='utf-8', newline='') as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    for i, row in enumerate(rows):
+                        writer.writerow([str(i), row[0], '0', str(i), row[1], row[column]])
+            merged, _ = merge_tool.merge_csv_files(root / 'en.csv', root / 'ja.csv', {}, categories=['skills'])
+        prefix = merge_tool.STYLED_TERM_KEY_PREFIX
+        self.assertEqual(merged[prefix + 'Test Key'], '試験の鍵')
+        self.assertNotIn(prefix + 'Unrelated Key', merged)
+        self.assertNotIn('会話由来の別訳', '\n'.join(merged.values()))
+
+    def test_confirmed_sentence_alias_resolves_later_inflected_reference(self):
+        en = ('{c_important}Known{/c} {SF_1} with {c_important}Small Bird Summons{/c}. '
+              '{c_important}Affected{/c} sacrifices {SF_2} {c_important}Small Birds Summons{/c}.')
+        ja = ('{c_important}小鳥{/c}と{c_important}既知{/c}{SF_1}。'
+              '{c_important}影響{/c}で{c_important}召喚中の小鳥{/c}{SF_2}。')
+        known = {'known': {'既知'}, 'small bird summons': {'小鳥召喚'}}
+        pairs = dict(merge_tool.create_styled_term_pairs(en, ja, known))
+        prefix = merge_tool.STYLED_TERM_KEY_PREFIX
+        self.assertEqual(pairs[prefix + 'Small Bird Summons'], '小鳥')
+        self.assertEqual(pairs[prefix + 'Small Birds Summons'], '召喚中の小鳥')
+        self.assertEqual(pairs[prefix + 'Affected'], '影響')
+        self.assertEqual(known['small bird summons'], {'小鳥召喚'})
+
+    def test_unstyled_known_translation_does_not_shift_styled_alias(self):
+        en = '{c_important}Known{/c} and {c_important}Variant{/c}.'
+        ja = '既知と{c_important}変種{/c}。'
+        pairs = dict(merge_tool.create_styled_term_pairs(en, ja, {'known': {'既知'}}))
+        self.assertEqual(pairs.get(merge_tool.STYLED_TERM_KEY_PREFIX + 'Variant'), '変種')
+        self.assertNotIn(merge_tool.STYLED_TERM_KEY_PREFIX + 'Known', pairs)
+
+    def test_repeated_condition_is_shared_between_languages_and_positions(self):
+        en = '{if:A}Hot{else}Cold{/if} {if:B}box{else}jar{/if} {if:A}red{else}blue{/if}'
+        ja = '{if:B}箱{else}壺{/if}、{if:A}赤い熱{else}青い冷気{/if}'
+        self.assertEqual(set(merge_tool.paired_conditional_variants(en, ja)), {
+            ('Hot box red', '箱、赤い熱'), ('Hot jar red', '壺、赤い熱'),
+            ('Cold box blue', '箱、青い冷気'), ('Cold jar blue', '壺、青い冷気'),
+        })
+        self.assertEqual(merge_tool.paired_conditional_variants('{if:A}Bad', '不正'), [])
+        self.assertEqual(merge_tool.paired_conditional_variants('{/if}Bad', '不正'), [])
+
+    def test_conditional_format_counts_do_not_prevent_effect_generation(self):
+        en = '{if:MYTHIC}{c_mythic}{/if}Test {SF_1}{if:MYTHIC}{/c}{/if} items.'
+        ja = '{if:MYTHIC}{c_mythic}{/if}試験{SF_1}個。'
+        pairs = merge_tool.create_d4_description_pairs(en, ja)
+        self.assertTrue(any(re.fullmatch(k, 'Test 27 items.') and v == '試験$1個。' for k,v in pairs))
+
+    def test_attribute_label_supplies_styled_alias_without_overwriting_name(self):
+        row = lambda file,text: merge_tool.CsvRow((),file,'Test',text,1)
+        en = row('AttributeDescriptions', '+[{VALUE2}*100|1%|] Sample Damage')
+        ja = row('AttributeDescriptions', '試験ダメージ+[{VALUE2}*100|1%|]')
+        self.assertEqual(merge_tool.create_attribute_styled_term_pairs(en,ja), [(merge_tool.STYLED_TERM_KEY_PREFIX+'Sample','試験')])
+        self.assertEqual(merge_tool.create_attribute_styled_term_pairs(en,row('AttributeDescriptions','試験ダメージ+[{VALUE3}*100|1%|]')), [])
+        self.assertEqual(merge_tool.create_attribute_styled_term_pairs(row('Conversation',en.translation),ja), [])
+
+    def test_sentence_boundaries_resolve_aliases_with_matching_numeric_references(self):
+        en = '{c_important}Known{/c} {SF_1} creates {c_important}First{/c}. {c_important}Other{/c} {SF_2} creates {c_important}Second{/c}.'
+        ja = '{c_important}既知{/c}{SF_1}で{c_important}共通{/c}。{c_important}別物{/c}{SF_2}で{c_important}共通{/c}。'
+        known = {'known': {'既知'}, 'other': {'別物'}}
+        pairs = merge_tool.create_styled_term_pairs(en,ja,known)
+        for term in ('First','Second'):
+            self.assertIn((merge_tool.STYLED_TERM_KEY_PREFIX+term,'共通'),pairs)
+        mismatched = ja.replace('{SF_2}', '{SF_3}')
+        self.assertNotIn((merge_tool.STYLED_TERM_KEY_PREFIX+'First','共通'),merge_tool.create_styled_term_pairs(en,mismatched,known))
+
+    def test_confirmed_conditional_and_missing_condition_corrections_are_scoped(self):
+        row = lambda file,key,text: merge_tool.CsvRow((),file,key,text,1)
+        file = 'Power_Barbarian_WarCry'
+        en = row(file,'Mod5_Description','Test {c_number}{if:SF_33}{SF_32} {/if}{/c}helpers.')
+        ja = row(file,'Mod5_Description','試験が{/if}{/c}{c_important}{if:SF_33}見本{else}見本{/if}{/c}を{c_number}{if:SF_33}{SF_32}体召喚する。')
+        fixed = merge_tool.corrected_skill_japanese(en,ja)
+        self.assertEqual(len(merge_tool.paired_conditional_variants(en.translation,fixed)),2)
+        self.assertTrue(any(re.fullmatch(k,'Test 2 helpers.') for k,v in merge_tool.create_skill_description_pairs(en,ja)))
+        self.assertEqual(merge_tool.corrected_skill_japanese(row('Power_Test','Mod5_Description',en.translation),ja),ja.translation)
+        file = 'Power_Warlock_Fissure'
+        en = row(file,'Mod3_Description','Test Pulling {c_important}{u}Hexed{/u}{/c} enemies inwards.')
+        ja = row(file,'Mod3_Description','試験ダメージを与えると同時に敵を引き寄せるようになる。')
+        self.assertIn('呪力を受けた',merge_tool.corrected_skill_japanese(en,ja))
+        self.assertEqual(merge_tool.corrected_skill_japanese(row(file,en.key,en.translation.replace('Hexed','All')),ja),ja.translation)
+
+    def test_runtime_numeric_capture_format_matches_generator(self):
+        source = (MODULE_PATH.parent.parent/'sources/content.js').read_text(encoding='utf-8')
+        capture = re.search(r'const GENERATED_TOOLTIP_VALUE_CAPTURE = String.raw`([^`]+)`;',source)
+        self.assertIsNotNone(capture)
+        self.assertEqual(capture[1],merge_tool.D4_VALUE_CAPTURE)
+
+    def test_audit_import_categories_exclude_unrelated_rows(self):
+        def row(file, key):
+            return merge_tool.CsvRow((), file, key, 'Authored sample', 1)
+        for file in ['Power_X1_Barbarian_Test', 'Power_X1_Rogue_Test', 'Power_NPC_Mercenary_Test']:
+            self.assertTrue(merge_tool.RULES['skills'].matches(row(file, 'desc')))
+            self.assertFalse(merge_tool.RULES['skills'].matches(row(file, 'QuestDialogue')))
+        self.assertFalse(merge_tool.RULES['skills'].matches(row('Power_X1_Raid_Test', 'desc')))
+        self.assertTrue(merge_tool.RULES['tooltip-labels'].matches(row('SkillRequirements', 'TestRequirement')))
+        self.assertTrue(merge_tool.RULES['tooltip-labels'].matches(row('General', 'PlayerClassTestMale')))
+        self.assertFalse(merge_tool.RULES['tooltip-labels'].matches(row('General', 'PlayerClassTest')))
+
+    def test_pet_health_and_malformed_seconds_preserve_numeric_order(self):
+        pairs = merge_tool.create_d4_description_pairs(
+            'A test box holds {pet_health:TEST} units for {SF_2} |4second;seconds.',
+            '試験箱は{SF_2}秒間、{pet_health:TEST}個を保持する。',
+        )
+        for text in ['A test box holds 900 units for 1 second.', 'A test box holds 900 units for 4 seconds.']:
+            self.assertTrue(any(re.fullmatch(k, text) and v == '試験箱は$2秒間、$1個を保持する。' for k,v in pairs))
+        self.assertFalse(any(re.fullmatch(k, 'A test box holds unknown units for 4 seconds.') for k,v in pairs))
+
+    def test_nested_styled_terms_keep_plain_and_underlined_candidates(self):
+        pairs = dict(merge_tool.create_styled_term_pairs(
+            '{c_important}Sample{/c} and {c_important}{u}Other{/u}{/c}\n{c_important}{u}Third{/u}{/c}',
+            '{c_important}見本{/c}と{c_important}{u}別物{/u}{/c}\n{c_important}{u}第三{/u}{/c}',
+        ))
+        self.assertEqual(pairs, {merge_tool.STYLED_TERM_KEY_PREFIX + 'Sample': '見本', merge_tool.STYLED_TERM_KEY_PREFIX + 'Third': '第三'})
+
+    def test_attribute_range_alias_keeps_capture_order(self):
+        row = lambda s: merge_tool.CsvRow((), 'AttributeDescriptions', 'Test', s, 1)
+        key = 'Sample ' + merge_tool.NUMBER_CAPTURE + ' units'
+        pairs = merge_tool.make_attribute_alias_pairs(row('Sample {VALUE} units'), row('試験{VALUE}個'), key, '試験$1個')
+        matched = [(re.fullmatch(k, 'Sample [3 - 19]% units'), v) for k,v in pairs]
+        self.assertTrue(any(m and m.group(1) == '[3 - 19]%' and v == '試験$1個' for m,v in matched))
+        self.assertEqual(merge_tool.make_attribute_alias_pairs(row('Sample {s1}'), row('試験{s1}'), 'Sample (.*?)', '試験$1'), [])
+
+    def test_styled_alias_uses_known_pair_not_word_order(self):
+        en = '{c_important}First{/c} with {c_important}Second{/c}'
+        ja = '{c_important}第二{/c}と{c_important}〈第一〉{/c}'
+        prefix = merge_tool.STYLED_TERM_KEY_PREFIX
+        self.assertEqual(merge_tool.create_styled_term_pairs(en, ja), [])
+        self.assertEqual(merge_tool.create_styled_term_pairs(en, ja, {'second': {'第二'}}), [(prefix+'First', '第一'), (prefix+'Second', '第二')])
+        self.assertEqual(merge_tool.create_styled_term_pairs(en, ja, {'second': {'第一', '第二'}}), [])
+        self.assertEqual(merge_tool.create_styled_term_pairs(en, ja, {'first': {'第二'}, 'second': {'第二'}}), [])
+
+    def test_numeric_intervals_do_not_swap_known_styled_terms(self):
+        en = '{c_important}First{/c} {SF_0} {c_important}Second{/c} {SF_1}'
+        ja = '{c_important}第二{/c}{SF_0}、{c_important}第一{/c}{SF_1}'
+        pairs = merge_tool.create_styled_term_pairs(en, ja, {'first': {'第一'}, 'second': {'第二'}})
+        self.assertNotIn((merge_tool.STYLED_TERM_KEY_PREFIX+'First', '第二'), pairs)
+        self.assertNotIn((merge_tool.STYLED_TERM_KEY_PREFIX+'Second', '第一'), pairs)
+        self.assertEqual(merge_tool.create_styled_term_pairs(en, ja, single_only=True), [])
+
+    def test_confirmed_interval_alias_can_resolve_other_term_in_same_line(self):
+        en = '{c_important}First{/c} and {c_important}Second{/c} {SF_1} {c_important}Third{/c} {SF_2}'
+        ja = '{c_important}第二{/c}と{c_important}第一{/c}{SF_1}{c_important}第三{/c}{SF_2}'
+        known = {'second': {'第二'}}
+        pairs = merge_tool.create_styled_term_pairs(en, ja, known)
+        self.assertIn((merge_tool.STYLED_TERM_KEY_PREFIX+'First', '第一'), pairs)
+        self.assertIn((merge_tool.STYLED_TERM_KEY_PREFIX+'Third', '第三'), pairs)
+        self.assertEqual(known, {'second': {'第二'}})
+        chained = merge_tool.create_styled_term_pairs(
+            '{c_important}First{/c} and {c_important}Second{/c}\n{c_important}First{/c} and {c_important}Third{/c}',
+            '{c_important}第二{/c}と{c_important}第一{/c}\n{c_important}第三{/c}と{c_important}第一{/c}', known,
+        )
+        self.assertIn((merge_tool.STYLED_TERM_KEY_PREFIX+'Third', '第三'), chained)
+
+    def test_numeric_reference_wrappers_and_template_plurals(self):
+        pairs = merge_tool.create_d4_description_pairs('Test stores {SF_7} objects.', '試験: [{SF_7}]個。')
+        self.assertTrue(any(re.fullmatch(k,'Test stores 42 objects.') and v=='試験: $1個。' for k,v in pairs))
+        self.assertIsNone(merge_tool.create_d4_description_pair('Test {SF_7}.', '試験{SF_8}。'))
+        k,v=merge_tool.create_template_pair('Test [{VALUE}|1|] |4Second:Seconds;', '試験[{VALUE}|1|]秒')
+        self.assertTrue(re.fullmatch(k,'Test 1 Second'))
+        self.assertTrue(re.fullmatch(k,'Test 4 Seconds'))
+        self.assertEqual(v,'試験$1秒')
+
+    def test_paragraph_difference_requires_matching_numeric_references(self):
+        en='Test one {SF_1}.\n\nTest two {SF_2}.'
+        ja='試験1は{SF_1}。試験2は{SF_2}。'
+        pairs=merge_tool.create_d4_description_pairs(en,ja)
+        self.assertTrue(any(re.fullmatch(k,'Test one 17.') and v=='試験1は$1。' for k,v in pairs))
+        mismatched=merge_tool.create_d4_description_pairs(en,'試験1は{SF_2}。試験2は{SF_1}。')
+        self.assertFalse(any(re.fullmatch(k,'Test one 17.') for k,v in mismatched))
+
+    def test_styled_quantity_prefix_is_not_part_of_term_alias(self):
+        pairs=merge_tool.create_styled_term_pairs(
+            'Test {c_number}{SF_1}{/c} {c_important}Widgets{/c}.',
+            '試験{c_number}{SF_1}{/c}{c_important}個の部品{/c}。',
+        )
+        self.assertIn((merge_tool.STYLED_TERM_KEY_PREFIX+'Widgets','部品'),pairs)
+        self.assertNotIn((merge_tool.STYLED_TERM_KEY_PREFIX+'Widgets','個の部品'),pairs)
+        unnumbered=merge_tool.create_styled_term_pairs('{c_important}Book{/c}', '{c_important}本の見本{/c}')
+        self.assertIn((merge_tool.STYLED_TERM_KEY_PREFIX+'Book','本の見本'),unnumbered)
+
+    def test_malformed_closing_format_tags_do_not_swallow_values(self):
+        en='Test {c_important}{u}Guard{/u]{/c} lasts {c_number}{SF_1}{/c].'
+        ja='試験の{c_important}{u}守り{/u}{/c}は{c_number}{SF_1}{/c}秒。'
+        pairs=merge_tool.create_d4_description_pairs(en,ja)
+        self.assertTrue(any(re.fullmatch(k,'Test Guard lasts 7.') and v=='試験の守りは$1秒。' for k,v in pairs))
+
+    def test_confirmed_skill_source_corrections_are_scoped_and_preserve_values(self):
+        # 補正対象の最小断片だけを、自作の短い説明文に組み込む。
+        cases = [
+            ('Power_Barbarian_Frenzy','desc',
+             'Test its Cast Speed is increased by {c_number}[{SF_1}*100|%+|]{/c} for {c_number}{buffduration:ATTACK_SPEED_INCREASE}{/c} seconds.',
+             '試験の発動速度が{c_number}{/c}秒間、{c_number}{buffduration:ATTACK_SPEED_INCREASE}{/c}[{SF_1}*100|%+|]上昇する。',
+             'Test its Cast Speed is increased by 12% for 7 seconds.',
+             '試験の発動速度が$2秒間、$1上昇する。'),
+            ('Power_Druid_Shred_NEW','Mod9_Description',
+             'Healing is increased to {c_number}[{SF_8}*2*100|%|]{/c}.',
+             '毒状態の敵に命中した場合、自身のライフが最大値の{c_number}[{SF_8}*100|%|]{/c}となる。',
+             'Healing is increased to 6%.',
+             '毒状態の敵に命中した場合、自身のライフが最大値の$1となる。'),
+            ('Power_Warlock_DemonDefender','Mod5_Description',
+             'It can absorb up to {c_number}[{SF_12}*100|%|]{/c}.',
+             '最大でプレイヤーのライフ最大値の{c_number}[{SF_12}|%|]{/c}とする。',
+             'It can absorb up to 30%.',
+             '最大でプレイヤーのライフ最大値の$1とする。'),
+        ]
+        for file,key,en,ja,display,expected in cases:
+            with self.subTest(file=file):
+                row=lambda name,text: merge_tool.CsvRow((),name,key,text,1)
+                pairs=merge_tool.create_skill_description_pairs(row(file,en),row(file,ja))
+                self.assertTrue(any(re.fullmatch(k,display) and v==expected for k,v in pairs))
+                self.assertEqual(merge_tool.create_skill_description_pairs(row('Power_Test',en),row('Power_Test',ja)),merge_tool.create_d4_description_pairs(en,ja))
+                future_en=en.replace('SF_1','SF_99').replace('SF_8','SF_98')
+                self.assertEqual(merge_tool.create_skill_description_pairs(row(file,future_en),row(file,ja)),merge_tool.create_d4_description_pairs(future_en,ja))
+
+    def test_legendary_affix_ui_name_survives_bare_word_conflict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            for language, labels in [('en',['Sample','Sample']),('ja',['通常の','伝説の'])]:
+                with (root/(language+'.csv')).open('w',encoding='utf-8',newline='') as f:
+                    writer=csv.writer(f);writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    for n,file in enumerate(['Affix_Attribute_Sample','Affix_legendary_sample']):
+                        writer.writerow([str(n),file,'0',str(n),'Name',labels[n]])
+            merged,_=merge_tool.merge_csv_files(root/'en.csv',root/'ja.csv',{})
+            self.assertNotIn('Sample',merged)
+            self.assertEqual(merged['Sample Aspect'],'伝説の化身')
+
     def test_fortress_duration_reference_correction_is_scoped(self):
         # Minimal authored descriptions around the confirmed duration fragment.
         en = 'Test area around you for {c_number}[SF_14|1|]{/c} seconds.'
@@ -473,7 +713,11 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                                              "Eagle" if language == "en" else value])
                 merged, report = merge_tool.merge_csv_files(
                     root / "en.csv", root / "ja.csv", {"Eagle": "以前の訳"}, overwrite_existing=True)
-                self.assertEqual(merged, {"Eagle": "イーグル"})
+                self.assertEqual(merged, {
+                    "Eagle": "イーグル",
+                    merge_tool.SKILL_TAG_KEY_PREFIX + "Eagle": "イーグル",
+                    merge_tool.STYLED_TERM_KEY_PREFIX + "Eagle": "イーグル",
+                })
                 self.assertEqual(report["counts"]["skill-tag-preferred-over-rare-name"], 1)
 
     def test_current_skill_wins_over_affix_alias_in_either_order(self):

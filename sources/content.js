@@ -17,7 +17,7 @@ const IGNORED_TEXT_TAGS = new Set([
   'SCRIPT', 'STYLE', 'TEXTAREA', 'NOSCRIPT', 'TEMPLATE', 'SVG', 'CANVAS',
   'IFRAME', 'OBJECT'
 ]);
-const DYNAMIC_VALUE_TEXT = /^\s*[\(（]?(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[(?:x|\+)\]|%x|x%|%|x|\+)?)[\)）]?\s*$/;
+const DYNAMIC_VALUE_TEXT = /^\s*[\(（]?([+-]?\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[(?:x|\+)\]|%x|x%|%|x|\+)?)[\)）]?\s*$/;
 const DYNAMIC_ORDINAL_TEXT = /^\s*(\d+)(?:st|nd|rd|th)\s*$/i;
 // 個別スキルリンクでMaxrollが計算できない数値も、元の表示と要素を保持する。
 const UNRESOLVED_VALUE_TEXT = /^\s*(\[NaN\s*-\s*NaN\])\s*$/;
@@ -55,6 +55,10 @@ const SPLINTER_LABEL_SELECTOR =
   '[class*="equipment_Equipment__seasonal__"] [class*="equipment_Equipment__runeName__"]';
 const SPLINTER_LABEL_KEY_PREFIX = '__D4T_SPLINTER_LABEL__:';
 const STYLED_TERM_KEY_PREFIX = '__D4T_STYLED_TERM__:';
+const ITEM_PREFIX_KEY_PREFIX = '__D4T_ITEM_PREFIX__:';
+// merge_csv_translations.py の D4_VALUE_CAPTURE と同じ生成形式。
+// 未計算値は値を補わず、同じキャプチャとして原表記を保持する。
+const GENERATED_TOOLTIP_VALUE_CAPTURE = String.raw`(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[x\]|%x|x%|%|x|\+)?(?:\s+(?:x\s+)?\[[^\]\r\n]+\])?)`;
 const SKILL_TAG_KEY_PREFIX = '__D4T_SKILL_TAG__:';
 const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
 const MAXROLL_INTERACTIVE_PARAGON_SELECTOR =
@@ -131,7 +135,9 @@ chrome.storage.sync.get(
     let dropSourceTranslations = new Map();
     let splinterLabelTranslations = new Map();
     let styledTermTranslations = new Map();
+    let itemNamePrefixes = new Map();
     let skillTagTranslations = new Map();
+    let runeNameTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
     let compiledPatternIndex = null;
@@ -175,7 +181,10 @@ chrome.storage.sync.get(
 
     function createTranslationRegex(pattern) {
       // Maxroll側のタイポグラフィ変換でASCIIの'が’になる場合も照合する。
-      const escapedPattern = pattern.replace(/['’]/g, "['’]");
+      const escapedPattern = pattern.replaceAll(
+        GENERATED_TOOLTIP_VALUE_CAPTURE,
+        '(' + GENERATED_TOOLTIP_VALUE_CAPTURE.slice(1, -1) + '|\\[NaN\\s*-\\s*NaN\\])'
+      ).replace(/['’]/g, "['’]");
       const leadingBoundary = /^[A-Za-z0-9_]/.test(pattern) ? '\\b' : '';
       const trailingBoundary = /[A-Za-z0-9_]$/.test(pattern) ? '\\b' : '';
       // 空白なしで連結されたルーン名の補助規則はCamelCase境界を使う。
@@ -224,9 +233,22 @@ chrome.storage.sync.get(
             dropSourceTranslations = new Map();
             splinterLabelTranslations = new Map();
             styledTermTranslations = new Map();
+            itemNamePrefixes = new Map();
             skillTagTranslations = new Map();
+            runeNameTranslations = new Map();
             const translationEntries = [];
             Object.entries(data).forEach(([pattern, replacement]) => {
+              if (pattern.startsWith(ITEM_PREFIX_KEY_PREFIX)) {
+                const key = pattern.slice(ITEM_PREFIX_KEY_PREFIX.length);
+                const separator = key.indexOf(':');
+                if (separator > 0) {
+                  const kind = key.slice(0, separator);
+                  const entries = itemNamePrefixes.get(kind) || [];
+                  entries.push({name: key.slice(separator + 1), replacement});
+                  itemNamePrefixes.set(kind, entries);
+                }
+                return;
+              }
               if (pattern.startsWith(SKILL_TAG_KEY_PREFIX)) {
                 skillTagTranslations.set(pattern.slice(SKILL_TAG_KEY_PREFIX.length).toLowerCase(), replacement);
                 return;
@@ -254,7 +276,11 @@ chrome.storage.sync.get(
                 return;
               }
               translationEntries.push([pattern, replacement]);
+              const runeName = pattern.match(/^\(\?<=\[a-z\]\)([A-Z][a-z]+)$/) ||
+                pattern.match(/^([A-Z][a-z]+)\(\?=\[A-Z\]\)$/);
+              if (runeName) runeNameTranslations.set(runeName[1], replacement);
             });
+            itemNamePrefixes.forEach(entries => entries.sort((a, b) => b.name.length - a.name.length));
 
             // 正規表現のメタデータ配列を初期化（RegExp自体は必要時に生成）
             compiledPatterns = [];
@@ -1321,12 +1347,40 @@ chrome.storage.sync.get(
       return splinterLabelTranslations.get(originalText.trim().toLocaleLowerCase('en-US')) ?? null;
     }
 
+    function getItemNameTranslation(textNodes, originalText, regexTable) {
+      const title = textNodes[0]?.parentElement?.closest('.d4t-title');
+      const tooltip = title?.closest('.d4t-GameTooltip');
+      if (!title || !tooltip || !textNodes.every(node => title.contains(node)) ||
+          !/Item Power|アイテムパワー/.test(tooltip.querySelector('.d4t-tip-header')?.textContent || '')) return null;
+      const subtitle = tooltip.querySelector('.d4t-sub-title')?.textContent || '';
+      const seal = /Horadric Seal|ホラドリム.*刻印/.test(subtitle);
+      const kinds = seal ? ['seal', 'rare'] : tooltip.matches('.d4t-tip-legendary') ? ['legendary'] : [];
+      const text = originalText.trimStart();
+      const normalized = text.replace(/’/g, "'").toLowerCase();
+      for (const kind of kinds) {
+        for (const entry of itemNamePrefixes.get(kind) || []) {
+          const name = entry.name.replace(/’/g, "'").toLowerCase();
+          if (normalized.startsWith(name) && /^\s+\S/.test(text.slice(name.length))) {
+            return originalText.slice(0, originalText.length - text.length) + entry.replacement +
+              applyRegexTransformations(text.slice(name.length), regexTable);
+          }
+        }
+      }
+      return null;
+    }
+
     function findStyledTranslationInSentence(originalText, translatedSentence) {
       // 単独置換の優先訳と全文中の訳が異なる場合、同じ語句に完全一致する
       // 辞書規則から対応先を探す。部分一致や汎用ワイルドカードは採用しない。
       const candidates = new Set();
+      function addCandidate(value) {
+        // スキル名を囲む括弧の有無は別の訳語ではない。下線等は名前の
+        // 内側へ対応させ、括弧付き候補との重複で曖昧と判定しない。
+        const label = value.replace(/^〈(.+)〉$/, '$1');
+        if (translatedSentence.includes(label)) candidates.add(label);
+      }
       for (const value of styledTermTranslations.get(originalText.toLocaleLowerCase('en-US')) || []) {
-        if (translatedSentence.includes(value)) candidates.add(value);
+        addCandidate(value);
       }
       for (const pattern of selectCompiledPatterns(
         originalText, compiledPatterns, compiledPatternIndex
@@ -1337,12 +1391,27 @@ chrome.storage.sync.get(
         const match = regex.exec(originalText);
         if (!match || match.index !== 0 || match[0].length !== originalText.length) continue;
         const translated = originalText.replace(regex, pattern.replacement).trim();
-        if (translated && translated !== originalText && translatedSentence.includes(translated)) {
-          candidates.add(translated);
+        if (translated && translated !== originalText) {
+          addCandidate(translated);
         }
       }
-      // 全文に複数の候補が含まれる場合は、装飾位置を推測しない。
-      return candidates.size === 1 ? candidates.values().next().value : null;
+      if (candidates.size === 1) return candidates.values().next().value;
+      // 「影」と「体の影」のように、確認済み候補が同じ一箇所に完全に
+      // 重なる場合は長い表記を保持できる。別の位置にも現れるなら曖昧なまま。
+      const longest = [...candidates].sort((a, b) => b.length - a.length)[0];
+      if (longest) {
+        const start = translatedSentence.indexOf(longest);
+        const end = start + longest.length;
+        if ([...candidates].every(value => {
+          let position = translatedSentence.indexOf(value);
+          while (position >= 0) {
+            if (position < start || position + value.length > end) return false;
+            position = translatedSentence.indexOf(value, position + 1);
+          }
+          return true;
+        })) return longest;
+      }
+      return null;
     }
 
     function replaceTextNodeRun(
@@ -1373,10 +1442,15 @@ chrome.storage.sync.get(
           tooltipContainer?.matches(SKILL_TOOLTIP_SELECTOR)
         )
       };
-      const tagElement = textNodes[0]?.parentElement?.closest('.d4t-tag');
+      const tagElement = textNodes[0]?.parentElement?.closest('.d4t-tag, [class*="PlannerWidget__header"]');
       const skillTag = tagElement && textNodes.every(node => tagElement.contains(node))
         ? skillTagTranslations.get(originalText.trim().toLowerCase()) ?? null : null;
-      const splinterLabel = skillTag ?? getSplinterLabelTranslation(textNodes, originalText);
+      const runeParts = originalText.trim().match(/[A-Z][a-z]+/g);
+      const runeLabel = runeParts?.length > 1 && runeParts.join('') === originalText.trim() &&
+        runeParts.every(part => runeNameTranslations.has(part))
+        ? originalText.replace(originalText.trim(), runeParts.map(part => runeNameTranslations.get(part)).join('')) : null;
+      const splinterLabel = getItemNameTranslation(textNodes, originalText, regexTable) ??
+        skillTag ?? runeLabel ?? getSplinterLabelTranslation(textNodes, originalText);
       if (splinterLabel !== null && splinterLabel !== originalText) stats.replacements++;
       const newText = splinterLabel ?? applyRegexTransformations(
         originalText,
@@ -1407,6 +1481,7 @@ chrome.storage.sync.get(
           if (
             element.classList.contains('d4-style-u') ||
             element.classList.contains('d4-color-important') ||
+            element.classList.contains('d4-color-gold') ||
             element.classList.contains('d4-color-label')
           ) {
             return true;
@@ -1492,6 +1567,7 @@ chrome.storage.sync.get(
 
       textNodes.forEach((textNode, nodeIndex) => {
         const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT) ||
+          textNode.nodeValue.replace(/\.\s*$/, '').match(DYNAMIC_VALUE_TEXT) ||
           textNode.nodeValue.match(UNRESOLVED_VALUE_TEXT);
         const ordinalMatch = textNode.nodeValue.match(DYNAMIC_ORDINAL_TEXT);
         let value = dynamicMatch?.[1] || ordinalMatch?.[1] || null;
@@ -1583,6 +1659,9 @@ chrome.storage.sync.get(
         }
 
         if (!value) {
+          if (isTooltipSentence && isStyledTextNode(textNode) && /[A-Za-z\u3040-\u30ff\u3400-\u9fff]/.test(textNode.nodeValue)) {
+            requiredAnchorCount++;
+          }
           return;
         }
         requiredAnchorCount++;
@@ -1813,6 +1892,92 @@ chrome.storage.sync.get(
           containerNode.insertBefore(fragment, insertionPoint);
           return finishReplacement();
         }
+
+        // 同じ色のspanが複数の数値・用語を包む場合は、その内側も計画して
+        // 並べ替える。既存の要素とイベントは保持し、全文の配置が確定してから書く。
+        const structuralSnapshots = new Map();
+        function rememberChildren(element) {
+          if (!structuralSnapshots.has(element)) structuralSnapshots.set(element, Array.from(element.childNodes));
+        }
+        function consolidateIdenticalColorSpans(element) {
+          if (element.nodeType !== 1) return;
+          const plainColor = node => node.tagName === 'SPAN' && node.attributes.length === 1 &&
+            /^d4-color-(?:mythic|unique|legendary|tooltip)$/.test(node.className);
+          if (plainColor(element)) {
+            const inner = Array.from(element.children).find(child => plainColor(child) && child.className === element.className);
+            if (inner) {
+              rememberChildren(element); rememberChildren(inner);
+              const children = Array.from(element.childNodes);
+              const split = children.indexOf(inner);
+              const first = inner.firstChild;
+              children.slice(0, split).forEach(child => inner.insertBefore(child, first));
+              children.slice(split + 1).forEach(child => inner.appendChild(child));
+            }
+          }
+          Array.from(element.children).forEach(consolidateIdenticalColorSpans);
+        }
+        rangeRoots.forEach(consolidateIdenticalColorSpans);
+
+        function planNestedRun(parent, roots, members, start, end) {
+          const groups = new Map();
+          for (const anchor of members) {
+            let root = textNodes[anchor.nodeIndex];
+            while (root.parentNode && root.parentNode !== parent) root = root.parentNode;
+            if (root.parentNode !== parent || !roots.includes(root)) return null;
+            const group = groups.get(root) || {root, members: []};
+            group.members.push(anchor); groups.set(root, group);
+          }
+          const extras = roots.filter(root => root.nodeType === 1 && !groups.has(root));
+          if (extras.some(root => root.textContent.trim() && !supplementaryRangeNodes.some(node => root.contains(node)))) return null;
+          const ordered = [...groups.values()].map(group => ({...group,
+            start: Math.min(...group.members.map(a => a.valuePosition)),
+            end: Math.max(...group.members.map(a => a.valuePosition + a.value.length))
+          })).sort((a, b) => a.start - b.start);
+          let previousEnd = start;
+          for (const group of ordered) {
+            if (group.start < previousEnd || group.end > end) return null;
+            previousEnd = group.end;
+            const anchor = group.members[0];
+            const atomic = group.members.length === 1 && textNodes.every((node, index) =>
+              !group.root.contains(node) || (index >= anchor.nodeIndex && index <= anchor.endNodeIndex) ||
+              node === anchor.prefixNode || /^\s*[)）]\s*$/.test(node.nodeValue));
+            if (!atomic) {
+              if (group.root.nodeType !== 1) return null;
+              // 全文を包んでいた色spanには、先頭の括弧や末尾の説明も残す。
+              if (ordered.length === 1) { group.start = start; group.end = end; }
+              group.plan = planNestedRun(group.root, Array.from(group.root.childNodes), group.members, group.start, group.end);
+              if (!group.plan) return null;
+            }
+          }
+          return {parent, roots, groups: ordered, extras, start, end};
+        }
+
+        const nestedPlan = planNestedRun(containerNode, rangeRoots, orderedAnchors, 0, newText.length);
+        if (nestedPlan) {
+          function commitNestedRun(plan) {
+            const insertionPoint = plan.roots[plan.roots.length - 1]?.nextSibling || null;
+            const fragment = document.createDocumentFragment();
+            plan.extras.filter(root => !root.textContent.trim()).forEach(root => fragment.appendChild(root));
+            let position = plan.start;
+            for (const group of plan.groups) {
+              const segment = newText.slice(position, group.start);
+              if (segment) fragment.appendChild(document.createTextNode(segment));
+              if (group.plan) commitNestedRun(group.plan);
+              else writeAnchorValue(group.members[0]);
+              fragment.appendChild(group.root);
+              position = group.end;
+            }
+            const trailing = newText.slice(position, plan.end);
+            if (trailing) fragment.appendChild(document.createTextNode(trailing));
+            plan.extras.filter(root => root.textContent.trim()).forEach(root => fragment.appendChild(root));
+            plan.roots.forEach(root => { if (root.parentNode === plan.parent) root.remove(); });
+            plan.parent.insertBefore(fragment, insertionPoint);
+          }
+          commitNestedRun(nestedPlan);
+          return finishReplacement();
+        }
+        // 対応先が交差するなど、色の範囲を維持できない場合は元の構造へ戻す。
+        [...structuralSnapshots].reverse().forEach(([element, children]) => element.replaceChildren(...children));
       }
 
       if (isTooltipSentence && requiredAnchorCount > 0) {
@@ -2059,6 +2224,7 @@ chrome.storage.sync.get(
         // ブロック境界を含まない要素では子孫テキストを一続きの文章として照合し、
         // 要素を作り直さず既存 Text ノードだけを書き換える。
         const hasBlockBoundary = hasBlockBoundaryChild(node);
+        let retryInlineAfterChildren = false;
         // 装着効果は色付きspanの外に句点がある。span内を再配置の単位に
         // すれば数値・下線・親の色を保持できる。句点は成功した時だけ消費する。
         const punctuationNode = node.nextSibling;
@@ -2097,6 +2263,7 @@ chrome.storage.sync.get(
               normalizeParagonGlyphRequirement(node);
               return stats;
             }
+            retryInlineAfterChildren = Boolean(node.closest(LONG_TEXT_TOOLTIP_SELECTOR));
           }
         } else {
           // MaxrollはCSV内の改行を、同じ効果<li>内の<br>として描画する。
@@ -2122,6 +2289,13 @@ chrome.storage.sync.get(
           // 数値と名称が隣接Textに分かれる場合も、この範囲だけ語順を変更する。
           // 後続の装飾付き効果文は並べ替えの対象に含めない。
           replaceTextNodeRun(textNodes, regexTable, stats, [], node, textNodes);
+        }
+        if (retryInlineAfterChildren) {
+          // 子の全文を先に変換しないと、後続の独立した注記を配置できない
+          // 場合がある。失敗したTooltip行だけ、子の処理後に一度再照合する。
+          const remaining = [], notes = [];
+          collectInlineTextNodes(node, remaining, notes);
+          if (remaining.length) replaceTextNodeRun(remaining, regexTable, stats, notes, node);
         }
         normalizeParagonGlyphRequirement(node);
       }
