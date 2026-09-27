@@ -304,7 +304,7 @@ class ExtensionStateTests(unittest.TestCase):
             content,
         )
         self.assertIn(
-            "'.d4t-GameTooltip, .d4t-SkillTagTooltip'",
+            "'.d4t-GameTooltip, .d4t-SkillTagTooltip, .d4t-RogueSpecializationTooltip'",
             content,
         )
         self.assertIn(

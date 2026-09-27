@@ -303,7 +303,8 @@ async function runContentPlannerTooltipDomTests(api, table, fixtures, sealFixtur
     document.body.append(host); // Real observer path, no direct replaceText call.
     await new Promise(resolve => setTimeout(resolve, 250));
     check(originals.every(node => tip.contains(node)), 'planner preserves original elements');
-    check(annotations.every(([node, text]) => node.textContent === text.replace('Item Contribution', '装備による加算')), 'planner preserves numeric annotations');
+    const expectedAnnotation = text => text.replace('Item Contribution', '装備による加算').replace(/\bBase\b/g, '基礎値').replace(/\bRight Ring\b/g, '右の指輪').replace(/\bLeft Ring\b/g, '左の指輪');
+    check(annotations.every(([node, text]) => (text === 'Base' ? node.textContent.replace(/:\s*$/, '') : node.textContent) === expectedAnnotation(text)), 'planner preserves numeric annotations');
     check(modifiers.length > 0 || index === fixtures.length, 'planner modifier fixture present');
     for (const row of modifiers) {
       check(!/becomes|Skill|makes you|Each|enemies|Stagger|Brimstones|Fortifies/.test(row.textContent), 'planner full modifier translation: ' + row.textContent);

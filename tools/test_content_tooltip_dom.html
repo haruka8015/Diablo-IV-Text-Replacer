@@ -8,7 +8,12 @@
   const source = await fetch('../sources/content.js').then(r => r.text());
   new Function(source);
   const dictionary = {
-    'Test Gizmo': '試験装置', 'Sample': '見本',
+    'Test Gizmo': '試験装置', 'Sample': '見本', 'Widgets': '試験部品',
+    '__D4T_SKILL_TAG__:Sample': '試験分類',
+    '(\\d+)\\s+sample\\s+units\\s+in\\s+test\\s+storage:': '試験保管数$1:',
+    'Test\\s+Gizmo\\s+stores\\s+\\[NaN - NaN\\]\\s+units\\.': '試験装置の保管数は[NaN - NaN]。',
+    'Test\\s+Gizmo\\s+moves\\s+(\\d+)\\s+objects\\s+into\\s+(\\d+)\\s+boxes\\.': '試験装置が$2個の箱に$1個の物体を移す。',
+    "Widgets'\\s+test\\s+value\\s+is\\s+(\\d+)\\.": '試験部品の試験値は$1。',
     '__D4T_STYLED_TERM__:Sample': '試験用',
     'Test Gizmo creates a Sample object for (\\d+) seconds\\.': '試験装置が試験用の物体を$1秒間作る。',
     'Test Gizmo stores (\\d+)% energy \\((\\d+)%\\) in a box\\.': '試験装置が$1%のエネルギー($2%)を箱に保存する。'
@@ -21,26 +26,54 @@
   let passed = 0;
   const check = (ok, name) => { if (!ok) throw new Error(name); passed++; };
   const samples = [
+    ['Test Gizmo stores <span class="d4-color-inactive">[NaN - NaN]</span> units.', '試験装置の保管数は[NaN - NaN]。'],
+    ['<span class="d4-color-important">Test Gizmo</span> moves <span class="d4-color-number">2</span> objects into <span class="d4-color-number">620</span> boxes.', '試験装置が620個の箱に2個の物体を移す。'],
+    ['<span class="d4-color-important">Widgets\'</span> test value is <span class="d4-color-number">17</span>.', '試験部品の試験値は17。'],
     ['<span class="d4-color-important">Test Gizmo</span> creates a <span class="d4-color-important">Sample</span> object for <span class="d4-color-number">7</span> seconds.', '試験装置が試験用の物体を7秒間作る。'],
     ['<span class="d4-color-important">Test Gizmo</span> stores <span class="d4-color-number">12%</span> energy <span class="d4-color-number">(12%<span class="d4-color-lightgray"> x [HP]</span>)</span> in a box.', '試験装置が12%のエネルギー(12% x [HP])を箱に保存する。']
   ];
   api.observeDOM(table);
-  for (const automatic of [false, true]) for (const [html, expected] of samples) {
+  for (const automatic of [false, true]) for (const [html, expected] of samples) for (const tooltipClass of ['d4t-GameTooltip', 'd4t-RogueSpecializationTooltip']) {
     const tip = document.createElement('div');
-    tip.className = 'd4t-GameTooltip';
+    tip.className = tooltipClass;
     tip.innerHTML = '<div class="d4t-description">' + html + '</div>';
     const elements = [...tip.querySelectorAll('*')];
-    const values = [...tip.querySelectorAll('.d4-color-number')].map(e => [e, e.textContent]);
+    const values = [...tip.querySelectorAll('.d4-color-number,.d4-color-inactive')].map(e => [e, e.textContent]);
     let clicks = 0;
     elements[1].addEventListener('click', () => clicks++);
     if (automatic) { document.body.append(tip); await new Promise(r => setTimeout(r, 300)); }
     else api.replaceText(tip, table);
     check(tip.textContent === expected, 'Full sentence: ' + tip.textContent);
     check(elements.every(e => tip.contains(e)), 'Original elements');
-    check(values.every(([e, text]) => e.textContent === text), 'Numeric annotation');
+    check(values.every(([e, text]) => e.textContent === text), 'Numeric annotation: ' + JSON.stringify(values.map(([e,t])=>[t,e.textContent])));
     elements[1].click(); check(clicks === 1, 'Event listener');
     const result = tip.innerHTML; api.replaceText(tip, table);
     check(result === tip.innerHTML, 'Repeated replacement');
+    tip.remove();
+  }
+  const tagHost = document.createElement('div');
+  tagHost.innerHTML = '<div class="d4t-GameTooltip"><div class="d4t-tag">Sample</div></div><p>Sample</p>';
+  const tag = tagHost.querySelector('.d4t-tag');
+  api.replaceText(tagHost, table);
+  check(tag.textContent === '試験分類', 'Contextual skill tag');
+  check(tagHost.querySelector('p').textContent === '見本', 'Ordinary word unchanged');
+  check(tagHost.querySelector('.d4t-tag') === tag, 'Tag element retained');
+  api.replaceText(tagHost, table);
+  check(tag.textContent === '試験分類', 'Tag repeated replacement');
+  for (const automatic of [false, true]) {
+    const tip = document.createElement('div');
+    tip.className = 'd4t-GameTooltip';
+    const effect = document.createElement('div');
+    const sibling = document.createElement('span');
+    sibling.innerHTML = '<span class="d4-color-number">3</span>と<span class="d4-color-number">4</span>';
+    effect.append(document.createTextNode('71'), document.createTextNode(' sample units in test storage: '), sibling);
+    tip.append(effect);
+    if (automatic) { document.body.append(tip); await new Promise(r => setTimeout(r, 300)); }
+    else api.replaceText(tip, table);
+    check(effect.textContent === '試験保管数71: 3と4', 'Adjacent text values reorder before a styled sibling');
+    check(effect.lastChild === sibling && sibling.textContent === '3と4', 'Styled sibling retained');
+    const translated = tip.innerHTML; api.replaceText(tip, table);
+    check(tip.innerHTML === translated, 'Adjacent text repeated replacement');
     tip.remove();
   }
   window.testResult = {selfAuthored: {passed}};

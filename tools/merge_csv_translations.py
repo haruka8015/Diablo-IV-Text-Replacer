@@ -60,6 +60,7 @@ TOOLTIP_TEXT_CATEGORIES = {
 }
 DROP_SOURCE_KEY_PREFIX = "__D4T_DROP_SOURCE__:"
 STYLED_TERM_KEY_PREFIX = "__D4T_STYLED_TERM__:"
+SKILL_TAG_KEY_PREFIX = "__D4T_SKILL_TAG__:"
 COLOR_TAG_RE = re.compile(
     r"\{/?c(?:_\w+|:[0-9A-Fa-f]{6,8})?\}",
     flags=re.IGNORECASE,
@@ -164,6 +165,7 @@ def _is_class_mechanic_row(row: CsvRow) -> bool:
             "SpiritBonding", "BondingInfo", "BondingInfo_Short", "BondingInfo_Unlocked",
         },
         "RogueSpecializations": {"SpecializationsHeader"},
+        "General": {"Specialization"},
         "SkillsUI": {"EnchantTitle", "EnchantSlotLocked", "EnchantSlotAvailable"},
         "UIToolTips": {"SkillSectionHeader_Enchant"},
         "SpiritbornMechanic": {
@@ -345,6 +347,8 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                         ("Hero", "ItemPower"),
                         ("GameOptions", "HeaderQuality"),
                         ("UIToolTips", "SealSlotToolTip"),
+                        ("SkillRequirements", "Ranged"),
+                        ("SkillRequirements", "Shield"),
                     }
                     or row.file_name == "ItemQuality"
                 ),
@@ -401,6 +405,7 @@ RULES: OrderedDict[str, Rule] = OrderedDict(
                     or "legendary" in row.file_name.lower()
                     or "mythic" in row.file_name.lower()
                     or row.file_name.startswith((
+                        "Affix_S05_BSK_",
                         "Affix_Runeword_", "Affix_Talisman_SetPower_",
                         "Affix_Talisman_Charm_", "Affix_HellfireTorch_",
                         "Affix_Talisman_SealAffix_",
@@ -807,24 +812,29 @@ def create_d4_description_pairs(
     pairs: list[tuple[str, str]] = []
 
     def expand_conditionals(value: str) -> list[str]:
-        match = D4_CONDITIONAL_RE.search(value)
+        match = re.search(r"\{if:[^{}\r\n]+\}", value, re.IGNORECASE)
         if not match:
             return [value]
-        prefix = value[: match.start()]
-        suffix = value[match.end() :]
-        true_branch = (
-            match.group("true_else")
-            if match.group("true_else") is not None
-            else match.group("true_only")
-        )
-        branches = [true_branch or "", match.group("false") or ""]
-        expanded: list[str] = []
-        for branch in branches:
-            expanded.extend(
-                prefix + branch + remainder
-                for remainder in expand_conditionals(suffix)
-            )
-        return expanded
+        # 別のifブロックのelseまで跨がず、入れ子の深さで対応を取る。
+        depth, alternative, closing = 1, None, None
+        for token in re.finditer(r"\{if:[^{}\r\n]+\}|\{else\}|\{/if\}", value[match.end():], re.IGNORECASE):
+            start, end = match.end() + token.start(), match.end() + token.end()
+            if token[0].lower().startswith('{if:'):
+                depth += 1
+            elif token[0].lower() == '{/if}':
+                depth -= 1
+                if depth == 0:
+                    closing = (start, end)
+                    break
+            elif depth == 1:
+                alternative = (start, end)
+        if closing is None:
+            return [value]
+        branches = [value[match.end():alternative[0] if alternative else closing[0]],
+                    value[alternative[1]:closing[0]] if alternative else '']
+        return [value[:match.start()] + branch_value + remainder
+                for branch in branches for branch_value in expand_conditionals(branch)
+                for remainder in expand_conditionals(value[closing[1]:])]
 
     # RuneDescriptionの{s1}などは実際の数値に置き換わるため、
     # 色タグだけを除去したテンプレート規則を通常の説明文規則より先に作る。
@@ -875,10 +885,12 @@ def create_d4_description_pairs(
         strip_format_tags_preserving_placeholders(english),
         strip_format_tags_preserving_placeholders(japanese),
     )
-    if template_pair:
+    has_conditionals = bool(re.search(r"\{if:", english + japanese, re.IGNORECASE))
+    if template_pair and not has_conditionals:
         pairs.append(template_pair)
 
-    append_description_and_line_pairs(english, japanese)
+    if not has_conditionals:
+        append_description_and_line_pairs(english, japanese)
 
     english_variants = expand_conditionals(english)
     japanese_variants = expand_conditionals(japanese)
@@ -1104,6 +1116,17 @@ def create_rune_tooltip_pairs(
     return pairs
 
 
+def create_skill_description_pairs(en_row: CsvRow, ja_row: CsvRow) -> list[tuple[str, str]]:
+    """確認済みのスキル原文の参照番号違いだけを補正する。"""
+    japanese = ja_row.translation
+    if (en_row.file_name, en_row.key) == ("Power_Paladin_Fortress", "desc"):
+        english_duration = "around you for {c_number}[SF_14|1|]{/c} seconds."
+        japanese_duration = "自身の周辺に{c_number}[SF_1|1|]{/c}秒間、防御エリアを生成する。"
+        if english_duration in en_row.translation and japanese_duration in japanese:
+            japanese = japanese.replace(japanese_duration, japanese_duration.replace("[SF_1|1|]", "[SF_14|1|]"))
+    return create_d4_description_pairs(en_row.translation, japanese)
+
+
 def create_drop_source_pairs(
     en_row: CsvRow, ja_row: CsvRow
 ) -> list[tuple[str, str]]:
@@ -1183,7 +1206,8 @@ def create_weapon_tooltip_pairs(
                 rf"{D4_VALUE_CAPTURE}\s+{_escape_regex_text(english_label)}"
                 r"\s+(\([^)]*\))",
                 f"{japanese_label}$1 $2",
-            )
+            ),
+            (rf"{D4_VALUE_CAPTURE}\s+{_escape_regex_text(english_label)}", f"{japanese_label}$1"),
         ]
 
     return create_d4_description_pairs(en_row.translation, ja_row.translation)
@@ -1602,6 +1626,8 @@ def merge_csv_files(
                     en_row.translation, ja_row.translation
                 )
                 if category == "flavors"
+                else create_skill_description_pairs(en_row, ja_row)
+                if en_row.file_name.startswith(PLAYER_SKILL_POWER_PREFIXES)
                 else create_d4_description_pairs(
                     en_row.translation, ja_row.translation
                 )
@@ -1657,6 +1683,17 @@ def merge_csv_files(
 
         if en_row.file_name.startswith("Power_Warlock_ClassMechanic_") and en_row.key == "desc":
             pairs.extend(create_styled_term_pairs(en_row.translation, ja_row.translation))
+        if (en_row.file_name, en_row.key) in {
+            ("Power_Rogue_PenetratingShot", "Mod0_Description"),
+            ("Power_Rogue_PoisonImbue", "Mod12_Description"),
+        }:
+            # 個数の助数詞を含む装飾語や、状態名とスキル名の訳の差を
+            # 対応する数値区間から取り込む。通常の単語訳は変更しない。
+            pairs.extend(create_styled_term_pairs(en_row.translation, ja_row.translation))
+        if en_row.file_name == "SkillTags" and en_row.key in {"Skill_Shade_TagName", "Skill_Primary_Defensive_TagName"}:
+            tag_key, tag_value, tag_rejection = make_translation_pair(en_row.translation, ja_row.translation)
+            if not tag_rejection:
+                pairs.append((SKILL_TAG_KEY_PREFIX + tag_key, tag_value))
         if en_row.file_name == "SkillTagNames" and en_row.key == "SKILL_TAG_COLD":
             # 装備接辞などの同名単語の既存訳を保持し、Tooltip全文の装飾には
             # スキル分類としての公式訳も使えるようにする。

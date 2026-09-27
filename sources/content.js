@@ -19,6 +19,8 @@ const IGNORED_TEXT_TAGS = new Set([
 ]);
 const DYNAMIC_VALUE_TEXT = /^\s*[\(（]?(\[?[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?(?:\s*[-–]\s*[+-]?(?:\d+(?:,\d{3})*|\.\d+)(?:\.\d+)?)?\]?(?:%\[(?:x|\+)\]|%x|x%|%|x|\+)?)[\)）]?\s*$/;
 const DYNAMIC_ORDINAL_TEXT = /^\s*(\d+)(?:st|nd|rd|th)\s*$/i;
+// 個別スキルリンクでMaxrollが計算できない数値も、元の表示と要素を保持する。
+const UNRESOLVED_VALUE_TEXT = /^\s*(\[NaN\s*-\s*NaN\])\s*$/;
 const SUPPLEMENTARY_VALUE_MARKER_TEXT =
   /^\s*\[(?:x|\+|HP|Damage)\]\s*$/i;
 const MAXROLL_DAMAGE_ANNOTATION_TEXT =
@@ -28,9 +30,10 @@ const PARAGON_CONDITIONAL_BONUS_TEXT =
 const PARAGON_ATTRIBUTE_REQUIREMENT_TEXT =
   /^\s*(?:[◆♦•·]\s*)?(?:Required(?:\s*\([^)]*\))?:\s*)?[+-]?\d[\d,.]*\s*\/[\s\S]*\b(?:Strength|Intelligence|Willpower|Dexterity)\b/i;
 const LONG_TEXT_TOOLTIP_SELECTOR =
-  '.d4t-GameTooltip, .d4t-SkillTagTooltip';
+  '.d4t-GameTooltip, .d4t-SkillTagTooltip, .d4t-RogueSpecializationTooltip';
 const SKILL_TOOLTIP_SELECTOR = [
   '.d4t-SkillTagTooltip',
+  '.d4t-RogueSpecializationTooltip',
   '.d4t-tip-skill' +
     ':not(.d4t-tip-common)' +
     ':not(.d4t-tip-magic)' +
@@ -52,6 +55,7 @@ const SPLINTER_LABEL_SELECTOR =
   '[class*="equipment_Equipment__seasonal__"] [class*="equipment_Equipment__runeName__"]';
 const SPLINTER_LABEL_KEY_PREFIX = '__D4T_SPLINTER_LABEL__:';
 const STYLED_TERM_KEY_PREFIX = '__D4T_STYLED_TERM__:';
+const SKILL_TAG_KEY_PREFIX = '__D4T_SKILL_TAG__:';
 const MAXROLL_GUIDE_ROOT_SELECTOR = '#main-article, main article';
 const MAXROLL_INTERACTIVE_PARAGON_SELECTOR =
   '[class*="_D4PlannerPageParagon__embed_"]';
@@ -127,6 +131,7 @@ chrome.storage.sync.get(
     let dropSourceTranslations = new Map();
     let splinterLabelTranslations = new Map();
     let styledTermTranslations = new Map();
+    let skillTagTranslations = new Map();
     let compiledPatterns = null;    // 通常の短い正規表現パターン
     let compiledWholeSentencePatterns = null; // Tooltip内だけで使う長文パターン
     let compiledPatternIndex = null;
@@ -219,8 +224,13 @@ chrome.storage.sync.get(
             dropSourceTranslations = new Map();
             splinterLabelTranslations = new Map();
             styledTermTranslations = new Map();
+            skillTagTranslations = new Map();
             const translationEntries = [];
             Object.entries(data).forEach(([pattern, replacement]) => {
+              if (pattern.startsWith(SKILL_TAG_KEY_PREFIX)) {
+                skillTagTranslations.set(pattern.slice(SKILL_TAG_KEY_PREFIX.length).toLowerCase(), replacement);
+                return;
+              }
               if (pattern.startsWith(STYLED_TERM_KEY_PREFIX)) {
                 styledTermTranslations.set(
                   pattern.slice(STYLED_TERM_KEY_PREFIX.length).toLocaleLowerCase('en-US'),
@@ -1363,7 +1373,10 @@ chrome.storage.sync.get(
           tooltipContainer?.matches(SKILL_TOOLTIP_SELECTOR)
         )
       };
-      const splinterLabel = getSplinterLabelTranslation(textNodes, originalText);
+      const tagElement = textNodes[0]?.parentElement?.closest('.d4t-tag');
+      const skillTag = tagElement && textNodes.every(node => tagElement.contains(node))
+        ? skillTagTranslations.get(originalText.trim().toLowerCase()) ?? null : null;
+      const splinterLabel = skillTag ?? getSplinterLabelTranslation(textNodes, originalText);
       if (splinterLabel !== null && splinterLabel !== originalText) stats.replacements++;
       const newText = splinterLabel ?? applyRegexTransformations(
         originalText,
@@ -1478,7 +1491,8 @@ chrome.storage.sync.get(
       });
 
       textNodes.forEach((textNode, nodeIndex) => {
-        const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT);
+        const dynamicMatch = textNode.nodeValue.match(DYNAMIC_VALUE_TEXT) ||
+          textNode.nodeValue.match(UNRESOLVED_VALUE_TEXT);
         const ordinalMatch = textNode.nodeValue.match(DYNAMIC_ORDINAL_TEXT);
         let value = dynamicMatch?.[1] || ordinalMatch?.[1] || null;
         // 注記を内包する数値spanでは括弧も同じspanに保持する。
@@ -1500,7 +1514,7 @@ chrome.storage.sync.get(
             regexTable
           ).trim();
           const possessiveMatch = originalStyledText.match(
-            /^([\s\S]+?)['’]s$/i
+            /^([\s\S]+?)(?:['’]s|['’])$/i
           );
           const translatedPossessiveBase = possessiveMatch
             ? applyRegexTransformations(
@@ -1598,6 +1612,10 @@ chrome.storage.sync.get(
               valuePosition < range.end &&
               valuePosition + value.length > range.start
             ) ||
+            (dynamicMatch && (
+              (/^[\d.]/.test(value) && /[\d.,]/.test(newText[valuePosition - 1] || '')) ||
+              (/\d$/.test(value) && /[\d.]/.test(newText[valuePosition + value.length] || ''))
+            )) ||
             (dynamicMatch && dynamicValueKinds.get(value)?.size === 2 &&
               Boolean(wrappedPrefixNode(textNode)) !==
                 /[\(（]\s*$/.test(newText.slice(0, valuePosition)))
@@ -2101,7 +2119,9 @@ chrome.storage.sync.get(
             textNodes.push(childNodes[index]);
             index++;
           }
-          replaceTextNodeRun(textNodes, regexTable, stats);
+          // 数値と名称が隣接Textに分かれる場合も、この範囲だけ語順を変更する。
+          // 後続の装飾付き効果文は並べ替えの対象に含めない。
+          replaceTextNodeRun(textNodes, regexTable, stats, [], node, textNodes);
         }
         normalizeParagonGlyphRequirement(node);
       }

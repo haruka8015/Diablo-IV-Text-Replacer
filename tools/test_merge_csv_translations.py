@@ -20,6 +20,55 @@ SPEC.loader.exec_module(merge_tool)
 
 
 class MergeCsvTranslationsTests(unittest.TestCase):
+    def test_fortress_duration_reference_correction_is_scoped(self):
+        # Minimal authored descriptions around the confirmed duration fragment.
+        en = 'Test area around you for {c_number}[SF_14|1|]{/c} seconds.'
+        ja = '試験: 自身の周辺に{c_number}[SF_1|1|]{/c}秒間、防御エリアを生成する。'
+        def pairs(file_name, english=en, japanese=ja):
+            row = lambda text: merge_tool.CsvRow((), file_name, 'desc', text, 0)
+            return merge_tool.create_skill_description_pairs(row(english), row(japanese))
+        corrected = pairs('Power_Paladin_Fortress')
+        self.assertTrue(any(re.fullmatch(k, 'Test area around you for 9.5 seconds.') and '$1秒間' in v for k, v in corrected))
+        self.assertEqual(pairs('Power_Paladin_Test'), merge_tool.create_d4_description_pairs(en, ja))
+        fixed = ja.replace('[SF_1|1|]', '[SF_14|1|]')
+        self.assertEqual(pairs('Power_Paladin_Fortress', japanese=fixed), merge_tool.create_d4_description_pairs(en, fixed))
+        changed = en.replace('[SF_14|1|]', '[SF_99|1|]')
+        self.assertEqual(pairs('Power_Paladin_Fortress', english=changed), merge_tool.create_d4_description_pairs(changed, ja))
+
+    def test_rogue_ui_and_contextual_tag_import_from_authored_rows(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for language, title, tag in [('en', 'Sample Category', 'Sample Shade'), ('ja', '試験分類', '試験の影')]:
+                with (root / (language + '.csv')).open('w', encoding='utf-8', newline='') as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow(merge_tool.CSV_REQUIRED_COLUMNS)
+                    writer.writerow(['1', 'General', '0', '1', 'Specialization', title])
+                    writer.writerow(['2', 'SkillTags', '0', '2', 'Skill_Shade_TagName', tag])
+            merged, _ = merge_tool.merge_csv_files(root / 'en.csv', root / 'ja.csv', {'Sample Shade': '別用途の訳'})
+            self.assertEqual(merged['Sample Shade'], '別用途の訳')
+            self.assertEqual(merged[merge_tool.SKILL_TAG_KEY_PREFIX + 'Sample Shade'], '試験の影')
+            self.assertTrue(any(re.fullmatch(k, 'Sample Category') and v == '試験分類' for k,v in merged.items()))
+
+    def test_adjacent_and_nested_conditionals_use_matching_else(self):
+        # Self-authored input: no game CSV or copied descriptions.
+        en = '{if:A}Banner\n{/if}Test value {if:B}{if:C}{SF_1}{else}{SF_2}{/if}{else}{SF_3}{/if}.'
+        ja = '{if:A}見出し\n{/if}試験値{if:B}{if:C}{SF_1}{else}{SF_2}{/if}{else}{SF_3}{/if}。'
+        pairs = merge_tool.create_d4_description_pairs(en, ja)
+        self.assertTrue(any(re.fullmatch(k, 'Test value 17.') and v == '試験値$1。' for k,v in pairs))
+        self.assertTrue(any(re.fullmatch(k, 'Banner Test value 17.') for k,v in pairs))
+        self.assertFalse(any(merge_tool.D4_VALUE_CAPTURE * 2 in k for k,v in pairs))
+
+    def test_weapon_rate_without_optional_site_annotation(self):
+        def row(text):
+            return merge_tool.CsvRow((), 'H2OLayout', 'TooltipRatingLabelAttackSpeed', text, 1)
+        pairs = merge_tool.create_weapon_tooltip_pairs(row('Test Rate{s1} {s2}'), row('試験頻度{s1} {s2}'))
+        self.assertTrue(any(re.fullmatch(k, '1.25 Test Rate') and v == '試験頻度$1' for k,v in pairs))
+        self.assertTrue(any(re.fullmatch(k, '1.25 Test Rate (sample)') for k,v in pairs))
+
+    def test_seasonal_affix_effect_category(self):
+        row = merge_tool.CsvRow((), 'Affix_S05_BSK_Test', 'Desc', 'Test value {SF_1}.', 1)
+        self.assertTrue(merge_tool.RULES['effects'].matches(row))
+
     def local_fixture_dir(self):
         if os.environ.get("D4T_LOCAL_FIXTURES") != "1":
             self.skipTest("Local third-party inputs: set D4T_LOCAL_FIXTURES=1 to opt in")
@@ -1380,7 +1429,7 @@ class MergeCsvTranslationsTests(unittest.TestCase):
                     csv_row(key, english),
                     csv_row(key, japanese),
                 )
-                self.assertEqual(len(pairs), 1)
+                self.assertEqual(len(pairs), 2 if key == 'TooltipRatingLabelAttackSpeed' else 1)
                 pattern, replacement = pairs[0]
                 self.assertRegex(rendered, pattern)
                 self.assertEqual(replacement, expected)
